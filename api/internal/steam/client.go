@@ -11,6 +11,7 @@ import (
 const (
 	defaultOpenIDEndpoint = "https://steamcommunity.com/openid/login"
 	defaultWebAPIBase     = "https://api.steampowered.com"
+	defaultCommunityBase  = "https://steamcommunity.com"
 )
 
 type Client struct {
@@ -20,6 +21,7 @@ type Client struct {
 	callbackURL    string // ex: http://localhost:8080/auth/steam/callback
 	openIDEndpoint string
 	webAPIBase     string
+	communityBase  string
 }
 
 func NewClient(apiKey, realm, callbackURL string) *Client {
@@ -30,6 +32,7 @@ func NewClient(apiKey, realm, callbackURL string) *Client {
 		callbackURL:    callbackURL,
 		openIDEndpoint: defaultOpenIDEndpoint,
 		webAPIBase:     defaultWebAPIBase,
+		communityBase:  defaultCommunityBase,
 	}
 }
 

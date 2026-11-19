@@ -8,12 +8,38 @@ import (
 	"time"
 )
 
+type InventoryItem struct {
+	ID             int64
+	OwnerID        int64
+	AssetID        string
+	ClassID        string
+	InstanceID     string
+	MarketHashName string
+	Name           string
+	ItemType       string
+	Weapon         string
+	Rarity         string
+	RarityColor    string
+	Exterior       string
+	FloatValue     *float64
+	PaintSeed      *int32
+	IconURL        string
+	Stickers       []byte
+	Tradable       bool
+	Marketable     bool
+	RemovedAt      *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 type User struct {
-	ID           int64
-	SteamID      string
-	DisplayName  string
-	AvatarURL    string
-	BalanceCents int64
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID                 int64
+	SteamID            string
+	DisplayName        string
+	AvatarURL          string
+	BalanceCents       int64
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	InventoryRefreshAt *time.Time
+	InventorySyncedAt  *time.Time
 }

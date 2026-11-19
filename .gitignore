@@ -3,3 +3,7 @@
 /api/bin/
 node_modules/
 .next/
+
+# instruções locais do Claude Code
+claude.md
+CLAUDE.md

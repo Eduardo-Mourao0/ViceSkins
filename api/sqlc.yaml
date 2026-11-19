@@ -8,8 +8,16 @@ sql:
         package: repository
         out: internal/repository
         sql_package: pgx/v5
+        emit_pointers_for_null_types: true
         rename:
           avatar_url: AvatarURL
+          icon_url: IconURL
+          present_asset_ids: PresentAssetIDs
         overrides:
           - db_type: timestamptz
             go_type: time.Time
+          - db_type: timestamptz
+            nullable: true
+            go_type:
+              type: time.Time
+              pointer: true

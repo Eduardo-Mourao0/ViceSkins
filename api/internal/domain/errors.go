@@ -7,4 +7,7 @@ import "errors"
 var (
 	ErrNotFound        = errors.New("not found")
 	ErrUnauthenticated = errors.New("unauthenticated")
+
+	ErrInventoryPrivate    = errors.New("steam inventory is private")
+	ErrUpstreamRateLimited = errors.New("steam is rate limiting requests")
 )

@@ -10,7 +10,7 @@ import (
 )
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at FROM users
+SELECT id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at FROM users
 WHERE id = $1
 `
 
@@ -25,6 +25,8 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.BalanceCents,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.InventoryRefreshAt,
+		&i.InventorySyncedAt,
 	)
 	return i, err
 }
@@ -36,7 +38,7 @@ ON CONFLICT (steam_id) DO UPDATE
 SET display_name = EXCLUDED.display_name,
     avatar_url   = EXCLUDED.avatar_url,
     updated_at   = now()
-RETURNING id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at
+RETURNING id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at
 `
 
 type UpsertUserBySteamIDParams struct {
@@ -56,6 +58,8 @@ func (q *Queries) UpsertUserBySteamID(ctx context.Context, arg UpsertUserBySteam
 		&i.BalanceCents,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.InventoryRefreshAt,
+		&i.InventorySyncedAt,
 	)
 	return i, err
 }

@@ -55,15 +55,17 @@ func run() error {
 	}
 
 	// Montagem manual das dependências (o que o container de DI do Nest faz sozinho).
-	queries := repository.New(pool)
+	store := repository.NewStore(pool)
 	steamClient := steam.NewClient(cfg.SteamAPIKey, cfg.PublicAPIURL, cfg.PublicAPIURL+"/auth/steam/callback")
 	tokens := auth.NewTokens(cfg.JWTSecret, 7*24*time.Hour)
-	authSvc := service.NewAuthService(queries, steamClient)
+	authSvc := service.NewAuthService(store, steamClient)
+	inventorySvc := service.NewInventoryService(store, steamClient, 5*time.Minute)
 
 	router := handler.NewRouter(handler.Deps{
-		DB:     pool,
-		Auth:   handler.NewAuthHandler(authSvc, tokens, cfg.CookieSecure, cfg.AuthRedirectURL),
-		Tokens: tokens,
+		DB:        pool,
+		Auth:      handler.NewAuthHandler(authSvc, tokens, cfg.CookieSecure, cfg.AuthRedirectURL),
+		Inventory: handler.NewInventoryHandler(inventorySvc),
+		Tokens:    tokens,
 	})
 
 	srv := &http.Server{

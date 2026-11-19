@@ -1,0 +1,48 @@
+{
+  "assets": [
+    {"appid": 730, "contextid": "2", "assetid": "1001", "classid": "11", "instanceid": "0", "amount": "1"},
+    {"appid": 730, "contextid": "2", "assetid": "1002", "classid": "22", "instanceid": "0", "amount": "1"},
+    {"appid": 730, "contextid": "2", "assetid": "1003", "classid": "99", "instanceid": "0", "amount": "1"}
+  ],
+  "descriptions": [
+    {
+      "appid": 730, "classid": "11", "instanceid": "0",
+      "icon_url": "ak_icon",
+      "name": "AK-47 | Redline",
+      "market_hash_name": "AK-47 | Redline (Field-Tested)",
+      "type": "Classified Rifle",
+      "tradable": 1, "marketable": 1,
+      "tags": [
+        {"category": "Weapon", "localized_tag_name": "AK-47"},
+        {"category": "Rarity", "localized_tag_name": "Classified", "color": "d32ce6"},
+        {"category": "Exterior", "localized_tag_name": "Field-Tested"}
+      ],
+      "descriptions": [
+        {"type": "html", "name": "exterior_wear", "value": "Exterior: Field-Tested"},
+        {"type": "html", "name": "sticker_info", "value": "<br><div id=\"sticker_info\"><center><img width=64 height=48 src=\"https://cdn.test/s1.png\" title=\"Sticker: Falcons | Budapest 2025\"><img width=64 height=48 src=\"https://cdn.test/s2.png\" title=\"Sticker: Crown &amp; Glory\"><br>Sticker: Falcons | Budapest 2025, Crown &amp; Glory</center></div>"}
+      ]
+    },
+    {
+      "appid": 730, "classid": "22", "instanceid": "0",
+      "icon_url": "case_icon",
+      "name": "Kilowatt Case",
+      "market_hash_name": "Kilowatt Case",
+      "type": "Base Grade Container",
+      "tradable": 0, "marketable": 1,
+      "tags": [{"category": "Rarity", "localized_tag_name": "Base Grade", "color": "b0c3d9"}],
+      "descriptions": []
+    }
+  ],
+  "asset_properties": [
+    {
+      "appid": 730, "contextid": "2", "assetid": "1001",
+      "asset_properties": [
+        {"propertyid": 1, "int_value": "661", "name": "Pattern Template"},
+        {"propertyid": 2, "float_value": "0.254781", "name": "Wear Rating"},
+        {"propertyid": 6, "string_value": "ABCDEF", "name": "Item Certificate"}
+      ]
+    }
+  ],
+  "total_inventory_count": 3,
+  "success": 1
+}

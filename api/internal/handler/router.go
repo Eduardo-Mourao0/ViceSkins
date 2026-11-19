@@ -8,9 +8,10 @@ import (
 )
 
 type Deps struct {
-	DB     Pinger
-	Auth   *AuthHandler
-	Tokens TokenIssuer
+	DB        Pinger
+	Auth      *AuthHandler
+	Inventory *InventoryHandler
+	Tokens    TokenIssuer
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -32,6 +33,8 @@ func NewRouter(d Deps) http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(RequireAuth(d.Tokens))
 		r.Get("/me", d.Auth.Me)
+		r.Get("/me/inventory", d.Inventory.List)
+		r.Post("/me/inventory/refresh", d.Inventory.Refresh)
 	})
 
 	return r
