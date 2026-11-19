@@ -7,7 +7,13 @@ import "errors"
 var (
 	ErrNotFound        = errors.New("not found")
 	ErrUnauthenticated = errors.New("unauthenticated")
+	ErrForbidden       = errors.New("forbidden")
+	ErrInvalidInput    = errors.New("invalid input")
 
 	ErrInventoryPrivate    = errors.New("steam inventory is private")
 	ErrUpstreamRateLimited = errors.New("steam is rate limiting requests")
+
+	ErrItemNotTradable   = errors.New("item is not tradable")
+	ErrItemAlreadyListed = errors.New("item already has an active listing")
+	ErrListingNotActive  = errors.New("listing is not active")
 )

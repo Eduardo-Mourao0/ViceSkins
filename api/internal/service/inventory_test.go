@@ -36,8 +36,12 @@ func (f *fakeStore) ClaimInventoryRefresh(_ context.Context, arg repository.Clai
 	return f.user.ID, nil
 }
 
-func (f *fakeStore) ListInventoryByOwner(context.Context, int64) ([]repository.InventoryItem, error) {
-	return f.items, nil
+func (f *fakeStore) ListInventoryByOwner(context.Context, int64) ([]repository.ListInventoryByOwnerRow, error) {
+	rows := make([]repository.ListInventoryByOwnerRow, 0, len(f.items))
+	for _, it := range f.items {
+		rows = append(rows, repository.ListInventoryByOwnerRow{InventoryItem: it})
+	}
+	return rows, nil
 }
 
 func (f *fakeStore) SyncInventory(_ context.Context, ownerID int64, items []repository.UpsertInventoryItemParams) error {

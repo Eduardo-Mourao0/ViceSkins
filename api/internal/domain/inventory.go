@@ -27,6 +27,10 @@ type InventoryItem struct {
 	Stickers       []Sticker
 	Tradable       bool
 	Marketable     bool
+
+	// Listing ativa do item, se houver.
+	ListingID         *int64
+	ListingPriceCents *int64
 }
 
 type Inventory struct {

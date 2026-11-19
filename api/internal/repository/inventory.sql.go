@@ -34,44 +34,56 @@ func (q *Queries) ClaimInventoryRefresh(ctx context.Context, arg ClaimInventoryR
 }
 
 const listInventoryByOwner = `-- name: ListInventoryByOwner :many
-SELECT id, owner_id, asset_id, class_id, instance_id, market_hash_name, name, item_type, weapon, rarity, rarity_color, exterior, float_value, paint_seed, icon_url, stickers, tradable, marketable, removed_at, created_at, updated_at
+SELECT inventory_items.id, inventory_items.owner_id, inventory_items.asset_id, inventory_items.class_id, inventory_items.instance_id, inventory_items.market_hash_name, inventory_items.name, inventory_items.item_type, inventory_items.weapon, inventory_items.rarity, inventory_items.rarity_color, inventory_items.exterior, inventory_items.float_value, inventory_items.paint_seed, inventory_items.icon_url, inventory_items.stickers, inventory_items.tradable, inventory_items.marketable, inventory_items.removed_at, inventory_items.created_at, inventory_items.updated_at,
+       listings.id          AS listing_id,
+       listings.price_cents AS listing_price_cents
 FROM inventory_items
-WHERE owner_id = $1
-  AND removed_at IS NULL
-ORDER BY tradable DESC, market_hash_name, id
+LEFT JOIN listings
+       ON listings.item_id = inventory_items.id AND listings.status = 'active'
+WHERE inventory_items.owner_id = $1
+  AND inventory_items.removed_at IS NULL
+ORDER BY inventory_items.tradable DESC, inventory_items.market_hash_name, inventory_items.id
 `
 
-func (q *Queries) ListInventoryByOwner(ctx context.Context, ownerID int64) ([]InventoryItem, error) {
+type ListInventoryByOwnerRow struct {
+	InventoryItem     InventoryItem
+	ListingID         *int64
+	ListingPriceCents *int64
+}
+
+func (q *Queries) ListInventoryByOwner(ctx context.Context, ownerID int64) ([]ListInventoryByOwnerRow, error) {
 	rows, err := q.db.Query(ctx, listInventoryByOwner, ownerID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []InventoryItem
+	var items []ListInventoryByOwnerRow
 	for rows.Next() {
-		var i InventoryItem
+		var i ListInventoryByOwnerRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.OwnerID,
-			&i.AssetID,
-			&i.ClassID,
-			&i.InstanceID,
-			&i.MarketHashName,
-			&i.Name,
-			&i.ItemType,
-			&i.Weapon,
-			&i.Rarity,
-			&i.RarityColor,
-			&i.Exterior,
-			&i.FloatValue,
-			&i.PaintSeed,
-			&i.IconURL,
-			&i.Stickers,
-			&i.Tradable,
-			&i.Marketable,
-			&i.RemovedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.InventoryItem.ID,
+			&i.InventoryItem.OwnerID,
+			&i.InventoryItem.AssetID,
+			&i.InventoryItem.ClassID,
+			&i.InventoryItem.InstanceID,
+			&i.InventoryItem.MarketHashName,
+			&i.InventoryItem.Name,
+			&i.InventoryItem.ItemType,
+			&i.InventoryItem.Weapon,
+			&i.InventoryItem.Rarity,
+			&i.InventoryItem.RarityColor,
+			&i.InventoryItem.Exterior,
+			&i.InventoryItem.FloatValue,
+			&i.InventoryItem.PaintSeed,
+			&i.InventoryItem.IconURL,
+			&i.InventoryItem.Stickers,
+			&i.InventoryItem.Tradable,
+			&i.InventoryItem.Marketable,
+			&i.InventoryItem.RemovedAt,
+			&i.InventoryItem.CreatedAt,
+			&i.InventoryItem.UpdatedAt,
+			&i.ListingID,
+			&i.ListingPriceCents,
 		); err != nil {
 			return nil, err
 		}

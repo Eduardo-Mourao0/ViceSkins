@@ -93,6 +93,13 @@ type inventoryItemResponse struct {
 	Stickers       []stickerResponse `json:"stickers"`
 	Tradable       bool              `json:"tradable"`
 	Marketable     bool              `json:"marketable"`
+	// Só no inventário do dono: listing ativa do item (null = não está à venda).
+	Listing *itemListingResponse `json:"listing,omitempty"`
+}
+
+type itemListingResponse struct {
+	ID         int64 `json:"id"`
+	PriceCents int64 `json:"priceCents"`
 }
 
 type inventoryResponse struct {
@@ -103,27 +110,35 @@ type inventoryResponse struct {
 func toInventoryResponse(inv domain.Inventory) inventoryResponse {
 	items := make([]inventoryItemResponse, 0, len(inv.Items))
 	for _, it := range inv.Items {
-		stickers := make([]stickerResponse, 0, len(it.Stickers))
-		for _, s := range it.Stickers {
-			stickers = append(stickers, stickerResponse(s))
+		resp := toInventoryItemResponse(it)
+		if it.ListingID != nil && it.ListingPriceCents != nil {
+			resp.Listing = &itemListingResponse{ID: *it.ListingID, PriceCents: *it.ListingPriceCents}
 		}
-		items = append(items, inventoryItemResponse{
-			ID:             it.ID,
-			AssetID:        it.AssetID,
-			Name:           it.Name,
-			MarketHashName: it.MarketHashName,
-			Type:           it.Type,
-			Weapon:         it.Weapon,
-			Rarity:         it.Rarity,
-			RarityColor:    it.RarityColor,
-			Exterior:       it.Exterior,
-			Float:          it.Float,
-			PaintSeed:      it.PaintSeed,
-			ImageURL:       it.ImageURL,
-			Stickers:       stickers,
-			Tradable:       it.Tradable,
-			Marketable:     it.Marketable,
-		})
+		items = append(items, resp)
 	}
 	return inventoryResponse{Items: items, SyncedAt: inv.SyncedAt}
+}
+
+func toInventoryItemResponse(it domain.InventoryItem) inventoryItemResponse {
+	stickers := make([]stickerResponse, 0, len(it.Stickers))
+	for _, s := range it.Stickers {
+		stickers = append(stickers, stickerResponse(s))
+	}
+	return inventoryItemResponse{
+		ID:             it.ID,
+		AssetID:        it.AssetID,
+		Name:           it.Name,
+		MarketHashName: it.MarketHashName,
+		Type:           it.Type,
+		Weapon:         it.Weapon,
+		Rarity:         it.Rarity,
+		RarityColor:    it.RarityColor,
+		Exterior:       it.Exterior,
+		Float:          it.Float,
+		PaintSeed:      it.PaintSeed,
+		ImageURL:       it.ImageURL,
+		Stickers:       stickers,
+		Tradable:       it.Tradable,
+		Marketable:     it.Marketable,
+	}
 }

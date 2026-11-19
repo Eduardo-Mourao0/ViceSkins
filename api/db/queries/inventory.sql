@@ -47,8 +47,12 @@ SET inventory_synced_at = now()
 WHERE id = $1;
 
 -- name: ListInventoryByOwner :many
-SELECT *
+SELECT sqlc.embed(inventory_items),
+       listings.id          AS listing_id,
+       listings.price_cents AS listing_price_cents
 FROM inventory_items
-WHERE owner_id = $1
-  AND removed_at IS NULL
-ORDER BY tradable DESC, market_hash_name, id;
+LEFT JOIN listings
+       ON listings.item_id = inventory_items.id AND listings.status = 'active'
+WHERE inventory_items.owner_id = $1
+  AND inventory_items.removed_at IS NULL
+ORDER BY inventory_items.tradable DESC, inventory_items.market_hash_name, inventory_items.id;

@@ -11,6 +11,7 @@ type Deps struct {
 	DB        Pinger
 	Auth      *AuthHandler
 	Inventory *InventoryHandler
+	Listings  *ListingHandler
 	Tokens    TokenIssuer
 }
 
@@ -35,6 +36,10 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/me", d.Auth.Me)
 		r.Get("/me/inventory", d.Inventory.List)
 		r.Post("/me/inventory/refresh", d.Inventory.Refresh)
+		r.Get("/me/listings", d.Listings.ListMine)
+
+		r.Post("/listings", d.Listings.Create)
+		r.Post("/listings/{id}/cancel", d.Listings.Cancel)
 	})
 
 	return r

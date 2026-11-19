@@ -60,11 +60,13 @@ func run() error {
 	tokens := auth.NewTokens(cfg.JWTSecret, 7*24*time.Hour)
 	authSvc := service.NewAuthService(store, steamClient)
 	inventorySvc := service.NewInventoryService(store, steamClient, 5*time.Minute)
+	listingSvc := service.NewListingService(store)
 
 	router := handler.NewRouter(handler.Deps{
 		DB:        pool,
 		Auth:      handler.NewAuthHandler(authSvc, tokens, cfg.CookieSecure, cfg.AuthRedirectURL),
 		Inventory: handler.NewInventoryHandler(inventorySvc),
+		Listings:  handler.NewListingHandler(listingSvc),
 		Tokens:    tokens,
 	})
 

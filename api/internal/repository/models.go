@@ -32,6 +32,16 @@ type InventoryItem struct {
 	UpdatedAt      time.Time
 }
 
+type Listing struct {
+	ID         int64
+	ItemID     int64
+	SellerID   int64
+	PriceCents int64
+	Status     string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
 type User struct {
 	ID                 int64
 	SteamID            string

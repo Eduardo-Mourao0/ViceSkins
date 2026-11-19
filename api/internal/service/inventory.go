@@ -17,7 +17,7 @@ import (
 type InventoryStore interface {
 	GetUserByID(ctx context.Context, id int64) (repository.User, error)
 	ClaimInventoryRefresh(ctx context.Context, arg repository.ClaimInventoryRefreshParams) (int64, error)
-	ListInventoryByOwner(ctx context.Context, ownerID int64) ([]repository.InventoryItem, error)
+	ListInventoryByOwner(ctx context.Context, ownerID int64) ([]repository.ListInventoryByOwnerRow, error)
 	SyncInventory(ctx context.Context, ownerID int64, items []repository.UpsertInventoryItemParams) error
 }
 
@@ -49,10 +49,12 @@ func (s *InventoryService) List(ctx context.Context, userID int64) (domain.Inven
 
 	items := make([]domain.InventoryItem, 0, len(rows))
 	for _, r := range rows {
-		it, err := toDomainItem(r)
+		it, err := toDomainItem(r.InventoryItem)
 		if err != nil {
 			return domain.Inventory{}, err
 		}
+		it.ListingID = r.ListingID
+		it.ListingPriceCents = r.ListingPriceCents
 		items = append(items, it)
 	}
 	return domain.Inventory{Items: items, SyncedAt: u.InventorySyncedAt}, nil

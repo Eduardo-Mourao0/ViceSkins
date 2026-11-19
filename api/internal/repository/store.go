@@ -5,10 +5,19 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// IsUniqueViolation diz se err veio de uma constraint UNIQUE específica
+// (código 23505 do Postgres). Fica aqui para o service não depender de pgconn.
+func IsUniqueViolation(err error, constraint string) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraint
+}
 
 // Store "embute" *Queries: todos os métodos gerados (GetUserByID, etc.)
 // ficam disponíveis direto em Store, como se fossem dele.
@@ -57,6 +66,10 @@ func (s *Store) SyncInventory(ctx context.Context, ownerID int64, items []Upsert
 			PresentAssetIDs: present,
 		}); err != nil {
 			return fmt.Errorf("mark removed items: %w", err)
+		}
+
+		if _, err := q.CancelInvalidListings(ctx, ownerID); err != nil {
+			return fmt.Errorf("cancel invalid listings: %w", err)
 		}
 
 		return q.SetInventorySynced(ctx, ownerID)
