@@ -8,8 +8,9 @@ import { formatPrice } from "@/lib/format";
 import { Button, SteamLoginButton } from "./ui";
 
 const nav = [
-  { href: "/inventory", label: "Inventário" },
-  { href: "/my-listings", label: "Meus anúncios" },
+  { href: "/market", label: "Mercado", public: true },
+  { href: "/inventory", label: "Inventário", public: false },
+  { href: "/my-listings", label: "Meus anúncios", public: false },
 ];
 
 export function Logo() {
@@ -33,24 +34,22 @@ export function Header() {
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-6 px-4 sm:px-6">
         <Logo />
 
-        {me && (
-          <nav className="hidden gap-1 sm:flex">
-            {nav.map((n) => {
-              const active = pathname.startsWith(n.href);
-              return (
-                <Link
-                  key={n.href}
-                  href={n.href}
-                  className={`rounded-md px-3 py-1.5 text-sm transition ${
-                    active ? "bg-ink-700 text-text" : "text-muted hover:text-text"
-                  }`}
-                >
-                  {n.label}
-                </Link>
-              );
-            })}
-          </nav>
-        )}
+        <nav className="hidden gap-1 sm:flex">
+          {nav.filter((n) => n.public || me).map((n) => {
+            const active = pathname.startsWith(n.href);
+            return (
+              <Link
+                key={n.href}
+                href={n.href}
+                className={`rounded-md px-3 py-1.5 text-sm transition ${
+                  active ? "bg-ink-700 text-text" : "text-muted hover:text-text"
+                }`}
+              >
+                {n.label}
+              </Link>
+            );
+          })}
+        </nav>
 
         <div className="ml-auto flex items-center gap-3">
           {isPending ? (
@@ -83,21 +82,19 @@ export function Header() {
         </div>
       </div>
 
-      {me && (
-        <nav className="flex gap-1 border-t border-line/60 px-4 py-2 sm:hidden">
-          {nav.map((n) => (
-            <Link
-              key={n.href}
-              href={n.href}
-              className={`rounded-md px-3 py-1.5 text-sm ${
-                pathname.startsWith(n.href) ? "bg-ink-700 text-text" : "text-muted"
-              }`}
-            >
-              {n.label}
-            </Link>
-          ))}
-        </nav>
-      )}
+      <nav className="flex gap-1 border-t border-line/60 px-4 py-2 sm:hidden">
+        {nav.filter((n) => n.public || me).map((n) => (
+          <Link
+            key={n.href}
+            href={n.href}
+            className={`rounded-md px-3 py-1.5 text-sm ${
+              pathname.startsWith(n.href) ? "bg-ink-700 text-text" : "text-muted"
+            }`}
+          >
+            {n.label}
+          </Link>
+        ))}
+      </nav>
     </header>
   );
 }

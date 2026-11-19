@@ -39,3 +39,38 @@ WHERE listings.item_id = inventory_items.id
   AND (inventory_items.removed_at IS NOT NULL
        OR inventory_items.owner_id <> listings.seller_id
        OR NOT inventory_items.tradable);
+
+-- Mercado público. Cada filtro é opcional: NULL (ou lista vazia) = não filtra.
+-- O ORDER BY usa CASE porque SQL não aceita coluna de ordenação como parâmetro.
+-- name: SearchActiveListings :many
+SELECT sqlc.embed(listings),
+       sqlc.embed(inventory_items),
+       users.display_name AS seller_name,
+       users.avatar_url   AS seller_avatar_url
+FROM listings
+JOIN inventory_items ON inventory_items.id = listings.item_id
+JOIN users           ON users.id = listings.seller_id
+WHERE listings.status = 'active'
+  AND (sqlc.narg(search)::text IS NULL OR inventory_items.market_hash_name ILIKE '%' || sqlc.narg(search)::text || '%')
+  AND (sqlc.narg(min_price)::bigint IS NULL OR listings.price_cents >= sqlc.narg(min_price)::bigint)
+  AND (sqlc.narg(max_price)::bigint IS NULL OR listings.price_cents <= sqlc.narg(max_price)::bigint)
+  AND (cardinality(@exteriors::text[]) = 0 OR inventory_items.exterior = ANY (@exteriors::text[]))
+  AND (sqlc.narg(min_float)::float8 IS NULL OR inventory_items.float_value >= sqlc.narg(min_float)::float8)
+  AND (sqlc.narg(max_float)::float8 IS NULL OR inventory_items.float_value <= sqlc.narg(max_float)::float8)
+ORDER BY
+    CASE WHEN @sort::text = 'price_asc'  THEN listings.price_cents END ASC,
+    CASE WHEN @sort::text = 'price_desc' THEN listings.price_cents END DESC,
+    CASE WHEN @sort::text = 'float_asc'  THEN inventory_items.float_value END ASC NULLS LAST,
+    listings.created_at DESC,
+    listings.id DESC
+LIMIT @page_limit OFFSET @page_offset;
+
+-- name: GetListingDetail :one
+SELECT sqlc.embed(listings),
+       sqlc.embed(inventory_items),
+       users.display_name AS seller_name,
+       users.avatar_url   AS seller_avatar_url
+FROM listings
+JOIN inventory_items ON inventory_items.id = listings.item_id
+JOIN users           ON users.id = listings.seller_id
+WHERE listings.id = $1;

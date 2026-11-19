@@ -40,6 +40,23 @@ export type Inventory = {
 
 export type ListingStatus = "active" | "sold" | "cancelled";
 
+export type Seller = {
+  id: number;
+  displayName: string;
+  avatarUrl: string;
+};
+
+export type MarketListing = Listing & { item: InventoryItem; seller: Seller };
+
+export type MarketPage = {
+  listings: MarketListing[];
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+};
+
+export type MarketSort = "newest" | "price_asc" | "price_desc" | "float_asc";
+
 export type Listing = {
   id: number;
   itemId: number;

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { RequireLogin } from "@/components/require-login";
-import { ItemCard } from "@/components/item-card";
+import { Badge, ItemCard } from "@/components/item-card";
 import { ItemDialog } from "@/components/item-dialog";
 import { Alert, Button, EmptyState, Spinner } from "@/components/ui";
 import { isApiError } from "@/lib/api";
@@ -132,13 +132,29 @@ function Inventory() {
             <EmptyState title="Nenhum item aqui">Tente outro filtro ou busca.</EmptyState>
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              {items.map((it) => (
-                <ItemCard
-                  key={it.id}
-                  item={it}
-                  onClick={it.listing || (it.tradable && it.marketable) ? () => setSelected(it) : undefined}
-                />
-              ))}
+              {items.map((it) => {
+                const sellable = it.tradable && it.marketable;
+                return (
+                  <ItemCard
+                    key={it.id}
+                    item={it}
+                    onClick={it.listing || sellable ? () => setSelected(it) : undefined}
+                    priceCents={it.listing?.priceCents}
+                    badge={it.listing && <Badge>À venda</Badge>}
+                    highlighted={!!it.listing}
+                    dimmed={!sellable && !it.listing}
+                    hint={
+                      sellable ? (
+                        <span className="text-cyan-soft opacity-0 transition group-hover:opacity-100">
+                          Anunciar →
+                        </span>
+                      ) : (
+                        <span className="text-faint">Não negociável</span>
+                      )
+                    }
+                  />
+                );
+              })}
             </div>
           )}
         </>

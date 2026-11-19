@@ -140,6 +140,62 @@ func (q *Queries) GetListing(ctx context.Context, id int64) (Listing, error) {
 	return i, err
 }
 
+const getListingDetail = `-- name: GetListingDetail :one
+SELECT listings.id, listings.item_id, listings.seller_id, listings.price_cents, listings.status, listings.created_at, listings.updated_at,
+       inventory_items.id, inventory_items.owner_id, inventory_items.asset_id, inventory_items.class_id, inventory_items.instance_id, inventory_items.market_hash_name, inventory_items.name, inventory_items.item_type, inventory_items.weapon, inventory_items.rarity, inventory_items.rarity_color, inventory_items.exterior, inventory_items.float_value, inventory_items.paint_seed, inventory_items.icon_url, inventory_items.stickers, inventory_items.tradable, inventory_items.marketable, inventory_items.removed_at, inventory_items.created_at, inventory_items.updated_at,
+       users.display_name AS seller_name,
+       users.avatar_url   AS seller_avatar_url
+FROM listings
+JOIN inventory_items ON inventory_items.id = listings.item_id
+JOIN users           ON users.id = listings.seller_id
+WHERE listings.id = $1
+`
+
+type GetListingDetailRow struct {
+	Listing         Listing
+	InventoryItem   InventoryItem
+	SellerName      string
+	SellerAvatarURL string
+}
+
+func (q *Queries) GetListingDetail(ctx context.Context, id int64) (GetListingDetailRow, error) {
+	row := q.db.QueryRow(ctx, getListingDetail, id)
+	var i GetListingDetailRow
+	err := row.Scan(
+		&i.Listing.ID,
+		&i.Listing.ItemID,
+		&i.Listing.SellerID,
+		&i.Listing.PriceCents,
+		&i.Listing.Status,
+		&i.Listing.CreatedAt,
+		&i.Listing.UpdatedAt,
+		&i.InventoryItem.ID,
+		&i.InventoryItem.OwnerID,
+		&i.InventoryItem.AssetID,
+		&i.InventoryItem.ClassID,
+		&i.InventoryItem.InstanceID,
+		&i.InventoryItem.MarketHashName,
+		&i.InventoryItem.Name,
+		&i.InventoryItem.ItemType,
+		&i.InventoryItem.Weapon,
+		&i.InventoryItem.Rarity,
+		&i.InventoryItem.RarityColor,
+		&i.InventoryItem.Exterior,
+		&i.InventoryItem.FloatValue,
+		&i.InventoryItem.PaintSeed,
+		&i.InventoryItem.IconURL,
+		&i.InventoryItem.Stickers,
+		&i.InventoryItem.Tradable,
+		&i.InventoryItem.Marketable,
+		&i.InventoryItem.RemovedAt,
+		&i.InventoryItem.CreatedAt,
+		&i.InventoryItem.UpdatedAt,
+		&i.SellerName,
+		&i.SellerAvatarURL,
+	)
+	return i, err
+}
+
 const listListingsBySeller = `-- name: ListListingsBySeller :many
 SELECT listings.id, listings.item_id, listings.seller_id, listings.price_cents, listings.status, listings.created_at, listings.updated_at, inventory_items.id, inventory_items.owner_id, inventory_items.asset_id, inventory_items.class_id, inventory_items.instance_id, inventory_items.market_hash_name, inventory_items.name, inventory_items.item_type, inventory_items.weapon, inventory_items.rarity, inventory_items.rarity_color, inventory_items.exterior, inventory_items.float_value, inventory_items.paint_seed, inventory_items.icon_url, inventory_items.stickers, inventory_items.tradable, inventory_items.marketable, inventory_items.removed_at, inventory_items.created_at, inventory_items.updated_at
 FROM listings
@@ -198,6 +254,112 @@ func (q *Queries) ListListingsBySeller(ctx context.Context, arg ListListingsBySe
 			&i.InventoryItem.RemovedAt,
 			&i.InventoryItem.CreatedAt,
 			&i.InventoryItem.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchActiveListings = `-- name: SearchActiveListings :many
+SELECT listings.id, listings.item_id, listings.seller_id, listings.price_cents, listings.status, listings.created_at, listings.updated_at,
+       inventory_items.id, inventory_items.owner_id, inventory_items.asset_id, inventory_items.class_id, inventory_items.instance_id, inventory_items.market_hash_name, inventory_items.name, inventory_items.item_type, inventory_items.weapon, inventory_items.rarity, inventory_items.rarity_color, inventory_items.exterior, inventory_items.float_value, inventory_items.paint_seed, inventory_items.icon_url, inventory_items.stickers, inventory_items.tradable, inventory_items.marketable, inventory_items.removed_at, inventory_items.created_at, inventory_items.updated_at,
+       users.display_name AS seller_name,
+       users.avatar_url   AS seller_avatar_url
+FROM listings
+JOIN inventory_items ON inventory_items.id = listings.item_id
+JOIN users           ON users.id = listings.seller_id
+WHERE listings.status = 'active'
+  AND ($1::text IS NULL OR inventory_items.market_hash_name ILIKE '%' || $1::text || '%')
+  AND ($2::bigint IS NULL OR listings.price_cents >= $2::bigint)
+  AND ($3::bigint IS NULL OR listings.price_cents <= $3::bigint)
+  AND (cardinality($4::text[]) = 0 OR inventory_items.exterior = ANY ($4::text[]))
+  AND ($5::float8 IS NULL OR inventory_items.float_value >= $5::float8)
+  AND ($6::float8 IS NULL OR inventory_items.float_value <= $6::float8)
+ORDER BY
+    CASE WHEN $7::text = 'price_asc'  THEN listings.price_cents END ASC,
+    CASE WHEN $7::text = 'price_desc' THEN listings.price_cents END DESC,
+    CASE WHEN $7::text = 'float_asc'  THEN inventory_items.float_value END ASC NULLS LAST,
+    listings.created_at DESC,
+    listings.id DESC
+LIMIT $9 OFFSET $8
+`
+
+type SearchActiveListingsParams struct {
+	Search     *string
+	MinPrice   *int64
+	MaxPrice   *int64
+	Exteriors  []string
+	MinFloat   *float64
+	MaxFloat   *float64
+	Sort       string
+	PageOffset int32
+	PageLimit  int32
+}
+
+type SearchActiveListingsRow struct {
+	Listing         Listing
+	InventoryItem   InventoryItem
+	SellerName      string
+	SellerAvatarURL string
+}
+
+// Mercado público. Cada filtro é opcional: NULL (ou lista vazia) = não filtra.
+// O ORDER BY usa CASE porque SQL não aceita coluna de ordenação como parâmetro.
+func (q *Queries) SearchActiveListings(ctx context.Context, arg SearchActiveListingsParams) ([]SearchActiveListingsRow, error) {
+	rows, err := q.db.Query(ctx, searchActiveListings,
+		arg.Search,
+		arg.MinPrice,
+		arg.MaxPrice,
+		arg.Exteriors,
+		arg.MinFloat,
+		arg.MaxFloat,
+		arg.Sort,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchActiveListingsRow
+	for rows.Next() {
+		var i SearchActiveListingsRow
+		if err := rows.Scan(
+			&i.Listing.ID,
+			&i.Listing.ItemID,
+			&i.Listing.SellerID,
+			&i.Listing.PriceCents,
+			&i.Listing.Status,
+			&i.Listing.CreatedAt,
+			&i.Listing.UpdatedAt,
+			&i.InventoryItem.ID,
+			&i.InventoryItem.OwnerID,
+			&i.InventoryItem.AssetID,
+			&i.InventoryItem.ClassID,
+			&i.InventoryItem.InstanceID,
+			&i.InventoryItem.MarketHashName,
+			&i.InventoryItem.Name,
+			&i.InventoryItem.ItemType,
+			&i.InventoryItem.Weapon,
+			&i.InventoryItem.Rarity,
+			&i.InventoryItem.RarityColor,
+			&i.InventoryItem.Exterior,
+			&i.InventoryItem.FloatValue,
+			&i.InventoryItem.PaintSeed,
+			&i.InventoryItem.IconURL,
+			&i.InventoryItem.Stickers,
+			&i.InventoryItem.Tradable,
+			&i.InventoryItem.Marketable,
+			&i.InventoryItem.RemovedAt,
+			&i.InventoryItem.CreatedAt,
+			&i.InventoryItem.UpdatedAt,
+			&i.SellerName,
+			&i.SellerAvatarURL,
 		); err != nil {
 			return nil, err
 		}

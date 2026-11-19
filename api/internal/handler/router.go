@@ -12,6 +12,7 @@ type Deps struct {
 	Auth      *AuthHandler
 	Inventory *InventoryHandler
 	Listings  *ListingHandler
+	Market    *MarketHandler
 	Tokens    TokenIssuer
 }
 
@@ -29,6 +30,10 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/steam/callback", d.Auth.Callback)
 		r.Post("/logout", d.Auth.Logout)
 	})
+
+	// Mercado: público, sem login.
+	r.Get("/listings", d.Market.Search)
+	r.Get("/listings/{id}", d.Market.Get)
 
 	// Rotas autenticadas
 	r.Group(func(r chi.Router) {

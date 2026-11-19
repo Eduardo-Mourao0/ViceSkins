@@ -13,6 +13,7 @@ sql:
           avatar_url: AvatarURL
           icon_url: IconURL
           present_asset_ids: PresentAssetIDs
+          seller_avatar_url: SellerAvatarURL
         overrides:
           - db_type: timestamptz
             go_type: time.Time

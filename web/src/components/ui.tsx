@@ -59,11 +59,21 @@ export function SteamIcon({ className = "size-5" }: { className?: string }) {
 }
 
 /** Link (não <Link>): o login precisa de navegação completa para ir até a Steam. */
-export function SteamLoginButton({ className = "" }: { className?: string }) {
+export function SteamLoginButton({
+  className = "",
+  variant = "solid",
+}: {
+  className?: string;
+  variant?: "solid" | "outline";
+}) {
+  const look =
+    variant === "solid"
+      ? "bg-pink font-semibold text-ink-950 shadow-[0_0_24px_-6px_var(--color-pink)] hover:bg-pink-soft"
+      : "border border-pink/50 text-pink-soft hover:bg-pink/10";
   return (
     <a
       href="/api/auth/steam/login"
-      className={`inline-flex items-center gap-2 rounded-lg bg-pink px-4 py-2 text-sm font-semibold text-ink-950 shadow-[0_0_24px_-6px_var(--color-pink)] transition hover:bg-pink-soft ${className}`}
+      className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm transition ${look} ${className}`}
     >
       <SteamIcon />
       Entrar com Steam

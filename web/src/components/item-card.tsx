@@ -1,19 +1,31 @@
 import Image from "next/image";
+import type { ReactNode } from "react";
 import type { InventoryItem } from "@/lib/types";
 import { formatPrice, wearShort } from "@/lib/format";
 import { FloatBar } from "./float-bar";
 
 /** Separa "AK-47 | Redline" em arma e nome da skin. */
-function splitName(name: string): { weapon: string; skin: string } {
+export function splitName(name: string): { weapon: string; skin: string } {
   const [weapon, ...rest] = name.split(" | ");
   return rest.length ? { weapon, skin: rest.join(" | ") } : { weapon: "", skin: name };
 }
 
-export function ItemCard({ item, onClick }: { item: InventoryItem; onClick?: () => void }) {
+type Props = {
+  item: InventoryItem;
+  onClick?: () => void;
+  /** Preço exibido no rodapé (anúncio). */
+  priceCents?: number;
+  /** Selo no canto inferior direito (ex.: "À venda", vendedor). */
+  badge?: ReactNode;
+  /** Texto no lugar do preço quando não há preço (ex.: "Anunciar →"). */
+  hint?: ReactNode;
+  highlighted?: boolean;
+  dimmed?: boolean;
+};
+
+export function ItemCard({ item, onClick, priceCents, badge, hint, highlighted, dimmed }: Props) {
   const { weapon, skin } = splitName(item.name);
   const color = item.rarityColor ? `#${item.rarityColor}` : "#6f6290";
-  const listed = !!item.listing;
-  const locked = !item.tradable || !item.marketable;
   const wear = wearShort(item.exterior);
   const stattrak = item.marketHashName.startsWith("StatTrak™");
 
@@ -24,8 +36,8 @@ export function ItemCard({ item, onClick }: { item: InventoryItem; onClick?: () 
       disabled={!onClick}
       style={{ "--rarity": color } as React.CSSProperties}
       className={`group card relative flex flex-col overflow-hidden text-left transition enabled:hover:-translate-y-0.5 enabled:hover:border-[var(--rarity)] disabled:cursor-default ${
-        listed ? "border-pink/70 shadow-neon-pink" : ""
-      } ${locked ? "opacity-60" : ""}`}
+        highlighted ? "border-pink/70 shadow-neon-pink" : ""
+      } ${dimmed ? "opacity-60" : ""}`}
     >
       {/* Faixa de raridade no topo */}
       <div className="h-0.5 w-full" style={{ backgroundColor: color }} />
@@ -82,25 +94,24 @@ export function ItemCard({ item, onClick }: { item: InventoryItem; onClick?: () 
 
         {item.float !== null && <FloatBar value={item.float} />}
 
-        <div className="mt-auto flex items-center justify-between pt-1">
-          {listed ? (
-            <span className="text-sm font-semibold text-pink tabular-nums">
-              {formatPrice(item.listing!.priceCents)}
-            </span>
-          ) : locked ? (
-            <span className="text-[11px] text-faint">Não negociável</span>
+        <div className="mt-auto flex min-h-6 items-center justify-between gap-2 pt-1">
+          {priceCents !== undefined ? (
+            <span className="text-sm font-semibold text-pink tabular-nums">{formatPrice(priceCents)}</span>
           ) : (
-            <span className="text-[11px] text-cyan-soft opacity-0 transition group-hover:opacity-100">
-              Anunciar →
-            </span>
+            <span className="text-[11px]">{hint}</span>
           )}
-          {listed && (
-            <span className="rounded-full bg-pink/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-pink uppercase">
-              À venda
-            </span>
-          )}
+          {badge}
         </div>
       </div>
     </button>
+  );
+}
+
+export function Badge({ children, tone = "pink" }: { children: ReactNode; tone?: "pink" | "cyan" }) {
+  const tones = { pink: "bg-pink/15 text-pink", cyan: "bg-cyan/15 text-cyan-soft" };
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase ${tones[tone]}`}>
+      {children}
+    </span>
   );
 }

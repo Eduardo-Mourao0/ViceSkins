@@ -67,6 +67,7 @@ func run() error {
 		Auth:      handler.NewAuthHandler(authSvc, tokens, cfg.CookieSecure, cfg.AuthRedirectURL),
 		Inventory: handler.NewInventoryHandler(inventorySvc),
 		Listings:  handler.NewListingHandler(listingSvc),
+		Market:    handler.NewMarketHandler(service.NewMarketService(store)),
 		Tokens:    tokens,
 	})
 

@@ -1,14 +1,33 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, isApiError } from "./api";
-import type { Inventory, Listing, ListingStatus, User } from "./types";
+import type { Inventory, Listing, ListingStatus, MarketListing, MarketPage, User } from "./types";
 
 export const keys = {
   me: ["me"] as const,
   inventory: ["inventory"] as const,
   myListings: (status: ListingStatus | "all") => ["my-listings", status] as const,
+  market: (query: string) => ["market", query] as const,
+  listing: (id: number) => ["listing", id] as const,
 };
+
+/** Mercado público. query é a query string já pronta (ex.: "q=ak&sort=price_asc"). */
+export function useMarket(query: string) {
+  return useQuery({
+    queryKey: keys.market(query),
+    queryFn: () => api<MarketPage>(`/listings${query ? `?${query}` : ""}`),
+    // Ao trocar filtro/página, mantém os resultados anteriores na tela até chegar o novo.
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useListing(id: number) {
+  return useQuery({
+    queryKey: keys.listing(id),
+    queryFn: () => api<MarketListing>(`/listings/${id}`),
+  });
+}
 
 /** Usuário logado, ou null se não houver sessão. */
 export function useMe() {
@@ -73,6 +92,8 @@ function useInvalidateListingViews() {
   return () => {
     qc.invalidateQueries({ queryKey: keys.inventory });
     qc.invalidateQueries({ queryKey: ["my-listings"] });
+    qc.invalidateQueries({ queryKey: ["market"] });
+    qc.invalidateQueries({ queryKey: ["listing"] });
   };
 }
 
