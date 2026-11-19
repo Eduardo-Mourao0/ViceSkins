@@ -13,8 +13,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/auth"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/config"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/handler"
+	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/repository"
+	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/service"
+	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/steam"
 )
 
 func main() {
@@ -46,9 +50,25 @@ func run() error {
 		return fmt.Errorf("ping db: %w", err)
 	}
 
+	if cfg.SteamAPIKey == "" {
+		slog.Warn("STEAM_API_KEY not set: steam login will fail when fetching the profile")
+	}
+
+	// Montagem manual das dependências (o que o container de DI do Nest faz sozinho).
+	queries := repository.New(pool)
+	steamClient := steam.NewClient(cfg.SteamAPIKey, cfg.PublicAPIURL, cfg.PublicAPIURL+"/auth/steam/callback")
+	tokens := auth.NewTokens(cfg.JWTSecret, 7*24*time.Hour)
+	authSvc := service.NewAuthService(queries, steamClient)
+
+	router := handler.NewRouter(handler.Deps{
+		DB:     pool,
+		Auth:   handler.NewAuthHandler(authSvc, tokens, cfg.CookieSecure, cfg.AuthRedirectURL),
+		Tokens: tokens,
+	})
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           handler.NewRouter(pool),
+		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
