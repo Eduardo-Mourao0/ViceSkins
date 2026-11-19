@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink-950: #07040d;
+  --color-ink-900: #0d0817;
+  --color-ink-850: #120b20;
+  --color-ink-800: #181029;
+  --color-ink-700: #231839;
+  --color-line: #2c1f47;
+  --color-muted: #a596c2;
+  --color-faint: #6f6290;
+  --color-text: #f3eefc;
+
+  --color-pink: #ff2d95;
+  --color-pink-soft: #ff6fb5;
+  --color-cyan: #2de2e6;
+  --color-cyan-soft: #8ff3f5;
+  --color-success: #3ee08f;
+  --color-danger: #ff5470;
+  --color-warning: #ffc24b;
+
+  --font-sans: var(--font-sora);
+  --font-script: var(--font-yellowtail);
+
+  --shadow-neon-pink: 0 0 0 1px rgb(255 45 149 / 0.5), 0 0 24px -4px rgb(255 45 149 / 0.55);
+  --shadow-neon-cyan: 0 0 0 1px rgb(45 226 230 / 0.5), 0 0 24px -4px rgb(45 226 230 / 0.5);
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-ink-950);
+    color: var(--color-text);
+    /* Brilho de pôr do sol bem sutil no topo da página. */
+    background-image:
+      radial-gradient(60rem 28rem at 15% -10%, rgb(255 45 149 / 0.12), transparent 70%),
+      radial-gradient(50rem 26rem at 90% -15%, rgb(45 226 230 / 0.1), transparent 70%);
+    background-repeat: no-repeat;
+  }
+
+  ::selection {
+    background: rgb(255 45 149 / 0.35);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-cyan);
+    outline-offset: 2px;
+  }
+}
+
+@utility text-neon-pink {
+  color: var(--color-pink);
+  text-shadow: 0 0 18px rgb(255 45 149 / 0.6);
+}
+
+@utility text-neon-cyan {
+  color: var(--color-cyan);
+  text-shadow: 0 0 18px rgb(45 226 230 / 0.55);
+}
+
+@utility card {
+  background: linear-gradient(180deg, var(--color-ink-800), var(--color-ink-850));
+  border: 1px solid var(--color-line);
+  border-radius: 0.875rem;
+}

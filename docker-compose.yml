@@ -33,8 +33,7 @@ services:
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://viceskins:viceskins@postgres:5432/viceskins?sslmode=disable
       PUBLIC_API_URL: http://localhost:8080
-      # Enquanto o front não existe, volta para o /me da própria API.
-      AUTH_REDIRECT_URL: ${AUTH_REDIRECT_URL:-http://localhost:8080/me}
+      AUTH_REDIRECT_URL: ${AUTH_REDIRECT_URL:-http://localhost:3000/inventory}
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-0123456789abcdef}
       STEAM_API_KEY: ${STEAM_API_KEY:-}
       COOKIE_SECURE: "false"
@@ -43,6 +42,16 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+
+  web:
+    build:
+      context: ./web
+      args:
+        API_INTERNAL_URL: http://api:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
 
 volumes:
   pgdata:
