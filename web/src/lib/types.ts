@@ -40,6 +40,23 @@ export type Inventory = {
 
 export type ListingStatus = "active" | "sold" | "cancelled";
 
+export type WalletEntryKind = "deposit" | "purchase" | "sale" | "refund";
+
+export type WalletEntry = {
+  id: number;
+  amountCents: number; // > 0 crédito, < 0 débito
+  balanceAfterCents: number;
+  kind: WalletEntryKind;
+  transactionId: number | null;
+  description: string;
+  createdAt: string;
+};
+
+export type Wallet = {
+  balanceCents: number;
+  entries: WalletEntry[];
+};
+
 export type Seller = {
   id: number;
   displayName: string;

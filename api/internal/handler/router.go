@@ -13,6 +13,7 @@ type Deps struct {
 	Inventory *InventoryHandler
 	Listings  *ListingHandler
 	Market    *MarketHandler
+	Wallet    *WalletHandler
 	Tokens    TokenIssuer
 }
 
@@ -45,6 +46,9 @@ func NewRouter(d Deps) http.Handler {
 
 		r.Post("/listings", d.Listings.Create)
 		r.Post("/listings/{id}/cancel", d.Listings.Cancel)
+
+		r.Get("/me/wallet", d.Wallet.Get)
+		r.Post("/wallet/deposits", d.Wallet.Deposit)
 	})
 
 	return r

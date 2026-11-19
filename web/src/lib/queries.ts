@@ -2,7 +2,16 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, isApiError } from "./api";
-import type { Inventory, Listing, ListingStatus, MarketListing, MarketPage, User } from "./types";
+import type {
+  Inventory,
+  Listing,
+  ListingStatus,
+  MarketListing,
+  MarketPage,
+  User,
+  Wallet,
+  WalletEntry,
+} from "./types";
 
 export const keys = {
   me: ["me"] as const,
@@ -10,7 +19,29 @@ export const keys = {
   myListings: (status: ListingStatus | "all") => ["my-listings", status] as const,
   market: (query: string) => ["market", query] as const,
   listing: (id: number) => ["listing", id] as const,
+  wallet: ["wallet"] as const,
 };
+
+export function useWallet(enabled: boolean) {
+  return useQuery({
+    queryKey: keys.wallet,
+    queryFn: () => api<Wallet>("/me/wallet?limit=100"),
+    enabled,
+  });
+}
+
+export function useDeposit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (amountCents: number) =>
+      api<WalletEntry>("/wallet/deposits", { method: "POST", body: JSON.stringify({ amountCents }) }),
+    onSuccess: (entry) => {
+      // Atualiza o saldo do header na hora, sem esperar outra requisição.
+      qc.setQueryData<User | null>(keys.me, (me) => me && { ...me, balanceCents: entry.balanceAfterCents });
+      qc.invalidateQueries({ queryKey: keys.wallet });
+    },
+  });
+}
 
 /** Mercado público. query é a query string já pronta (ex.: "q=ak&sort=price_asc"). */
 export function useMarket(query: string) {

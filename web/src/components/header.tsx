@@ -11,6 +11,7 @@ const nav = [
   { href: "/market", label: "Mercado", public: true },
   { href: "/inventory", label: "Inventário", public: false },
   { href: "/my-listings", label: "Meus anúncios", public: false },
+  { href: "/wallet", label: "Carteira", public: false },
 ];
 
 export function Logo() {
@@ -56,12 +57,16 @@ export function Header() {
             <div className="h-9 w-40 animate-pulse rounded-lg bg-ink-800" />
           ) : me ? (
             <>
-              <div className="hidden text-right sm:block">
+              <Link
+                href="/wallet"
+                title="Ver carteira"
+                className="hidden rounded-md px-2 py-1 text-right transition hover:bg-ink-800 sm:block"
+              >
                 <p className="text-[11px] uppercase tracking-wider text-faint">Saldo</p>
                 <p className="text-sm font-semibold text-cyan-soft tabular-nums">
                   {formatPrice(me.balanceCents)}
                 </p>
-              </div>
+              </Link>
               <div className="flex items-center gap-2 rounded-full border border-line bg-ink-850 py-1 pr-3 pl-1">
                 <Image
                   src={me.avatarUrl}

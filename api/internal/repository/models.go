@@ -53,3 +53,14 @@ type User struct {
 	InventoryRefreshAt *time.Time
 	InventorySyncedAt  *time.Time
 }
+
+type WalletEntry struct {
+	ID                int64
+	UserID            int64
+	AmountCents       int64
+	BalanceAfterCents int64
+	Kind              string
+	TransactionID     *int64
+	Description       string
+	CreatedAt         time.Time
+}

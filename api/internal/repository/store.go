@@ -46,6 +46,39 @@ func (s *Store) execTx(ctx context.Context, fn func(q *Queries) error) error {
 	return tx.Commit(ctx)
 }
 
+// Deposit credita amount no saldo do usuário e registra no ledger, atomicamente.
+func (s *Store) Deposit(ctx context.Context, userID, amountCents int64, description string) (WalletEntry, error) {
+	var entry WalletEntry
+	err := s.execTx(ctx, func(q *Queries) error {
+		var err error
+		entry, err = applyWalletEntry(ctx, q, userID, amountCents, "deposit", nil, description)
+		return err
+	})
+	return entry, err
+}
+
+// applyWalletEntry é a ÚNICA forma de mexer no saldo: altera users.balance_cents
+// e grava a linha do ledger com o saldo resultante. Precisa rodar dentro de uma
+// transação (q vem de execTx), senão as duas escritas podem se separar.
+func applyWalletEntry(ctx context.Context, q *Queries, userID, amountCents int64, kind string, txID *int64, description string) (WalletEntry, error) {
+	balance, err := q.AddToBalance(ctx, AddToBalanceParams{UserID: userID, AmountCents: amountCents})
+	if err != nil {
+		return WalletEntry{}, fmt.Errorf("update balance: %w", err)
+	}
+	entry, err := q.InsertWalletEntry(ctx, InsertWalletEntryParams{
+		UserID:            userID,
+		AmountCents:       amountCents,
+		BalanceAfterCents: balance,
+		Kind:              kind,
+		TransactionID:     txID,
+		Description:       description,
+	})
+	if err != nil {
+		return WalletEntry{}, fmt.Errorf("insert wallet entry: %w", err)
+	}
+	return entry, nil
+}
+
 // SyncInventory substitui o inventário em cache do usuário pelo que veio da Steam,
 // tudo numa transação: ou atualiza tudo, ou nada.
 func (s *Store) SyncInventory(ctx context.Context, ownerID int64, items []UpsertInventoryItemParams) error {
