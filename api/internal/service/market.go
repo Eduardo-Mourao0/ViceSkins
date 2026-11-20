@@ -148,6 +148,6 @@ func toMarketListing(l repository.Listing, it repository.InventoryItem, sellerNa
 	dl.Item = &item
 	return domain.MarketListing{
 		Listing: dl,
-		Seller:  domain.Seller{ID: l.SellerID, DisplayName: sellerName, AvatarURL: sellerAvatar},
+		Seller:  domain.PublicUser{ID: l.SellerID, DisplayName: sellerName, AvatarURL: sellerAvatar},
 	}, nil
 }

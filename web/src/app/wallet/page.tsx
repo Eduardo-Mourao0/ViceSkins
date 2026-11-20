@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useId, useState } from "react";
 import { RequireLogin } from "@/components/require-login";
 import { Alert, Button, EmptyState, Spinner } from "@/components/ui";
@@ -66,6 +67,14 @@ function WalletView() {
                     <p className="text-sm font-medium">{kindLabel[e.kind] ?? e.kind}</p>
                     <p className="truncate text-xs text-muted">
                       {e.description} · {formatDate(e.createdAt)}
+                      {e.transactionId && (
+                        <>
+                          {" · "}
+                          <Link href={`/transactions/${e.transactionId}`} className="text-cyan-soft hover:underline">
+                            transação #{e.transactionId}
+                          </Link>
+                        </>
+                      )}
                     </p>
                   </div>
                   <div className="text-right">

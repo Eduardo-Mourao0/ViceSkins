@@ -60,6 +60,29 @@ export type Transaction = {
   updatedAt: string;
 };
 
+export type TransactionDetail = Transaction & {
+  item: InventoryItem;
+  buyer: PublicUser;
+  seller: PublicUser;
+};
+
+export type TxPage = {
+  transactions: TransactionDetail[];
+  nextCursor: number | null;
+};
+
+export type TxSummary = {
+  purchases: number;
+  spentCents: number;
+  sales: number;
+  earnedCents: number;
+  pendingEarningsCents: number;
+  feesPaidCents: number;
+};
+
+export type TxRoleFilter = "all" | "buyer" | "seller";
+export type TxStatusFilter = "all" | "open" | "closed";
+
 export type WalletEntryKind = "deposit" | "purchase" | "sale" | "refund";
 
 export type WalletEntry = {
@@ -77,11 +100,14 @@ export type Wallet = {
   entries: WalletEntry[];
 };
 
-export type Seller = {
+/** Dados públicos de um usuário (vendedor, comprador). */
+export type PublicUser = {
   id: number;
   displayName: string;
   avatarUrl: string;
 };
+
+export type Seller = PublicUser;
 
 export type MarketListing = Listing & { item: InventoryItem; seller: Seller };
 

@@ -87,7 +87,7 @@ func run() error {
 		Listings:     handler.NewListingHandler(listingSvc),
 		Market:       handler.NewMarketHandler(service.NewMarketService(store)),
 		Wallet:       handler.NewWalletHandler(service.NewWalletService(store)),
-		Transactions: handler.NewTransactionHandler(purchaseSvc),
+		Transactions: handler.NewTransactionHandler(purchaseSvc, service.NewHistoryService(store)),
 		Tokens:       tokens,
 	})
 

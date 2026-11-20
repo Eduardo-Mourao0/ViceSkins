@@ -15,16 +15,22 @@ import (
 
 type PurchaseService interface {
 	Buy(ctx context.Context, buyerID, listingID int64) (domain.Transaction, error)
-	GetForUser(ctx context.Context, userID, txID int64) (domain.Transaction, error)
 	CancelByBuyer(ctx context.Context, buyerID, txID int64) (domain.Transaction, error)
 }
 
-type TransactionHandler struct {
-	svc PurchaseService
+type HistoryService interface {
+	List(ctx context.Context, userID int64, f domain.TxHistoryFilter) (domain.TxHistoryPage, error)
+	Get(ctx context.Context, userID, txID int64) (domain.TransactionDetail, error)
+	Summary(ctx context.Context, userID int64) (domain.TxSummary, error)
 }
 
-func NewTransactionHandler(svc PurchaseService) *TransactionHandler {
-	return &TransactionHandler{svc: svc}
+type TransactionHandler struct {
+	svc     PurchaseService
+	history HistoryService
+}
+
+func NewTransactionHandler(svc PurchaseService, history HistoryService) *TransactionHandler {
+	return &TransactionHandler{svc: svc, history: history}
 }
 
 // POST /listings/{id}/buy
@@ -48,13 +54,7 @@ func (h *TransactionHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID, _ := userIDFrom(r.Context())
-	tx, err := h.svc.GetForUser(r.Context(), userID, txID)
-	if err != nil {
-		writeTransactionErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, toTransactionResponse(tx, userID))
+	h.writeDetail(w, r, txID, http.StatusOK)
 }
 
 // POST /transactions/{id}/cancel
@@ -64,12 +64,75 @@ func (h *TransactionHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, _ := userIDFrom(r.Context())
-	tx, err := h.svc.CancelByBuyer(r.Context(), userID, txID)
+	if _, err := h.svc.CancelByBuyer(r.Context(), userID, txID); err != nil {
+		writeTransactionErr(w, err)
+		return
+	}
+	h.writeDetail(w, r, txID, http.StatusOK)
+}
+
+// GET /me/transactions?role=buyer|seller&status=open|closed|<status>&before=<id>&limit=20
+func (h *TransactionHandler) List(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	f := domain.TxHistoryFilter{Role: domain.TxRole(q.Get("role")), Status: q.Get("status")}
+	var err error
+	if f.Before, err = optInt64Value(q.Get("before")); err != nil {
+		writeError(w, http.StatusBadRequest, "before must be an integer")
+		return
+	}
+	limit, err := optInt64Value(q.Get("limit"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "limit must be an integer")
+		return
+	}
+	f.Limit = int(limit)
+
+	userID, _ := userIDFrom(r.Context())
+	page, err := h.history.List(r.Context(), userID, f)
 	if err != nil {
 		writeTransactionErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toTransactionResponse(tx, userID))
+	out := make([]transactionDetailResponse, 0, len(page.Transactions))
+	for _, t := range page.Transactions {
+		out = append(out, toTransactionDetailResponse(t, userID))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"transactions": out, "nextCursor": page.NextCursor})
+}
+
+// GET /me/transactions/summary
+func (h *TransactionHandler) Summary(w http.ResponseWriter, r *http.Request) {
+	userID, _ := userIDFrom(r.Context())
+	s, err := h.history.Summary(r.Context(), userID)
+	if err != nil {
+		writeTransactionErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{
+		"purchases":            s.Purchases,
+		"spentCents":           s.SpentCents,
+		"sales":                s.Sales,
+		"earnedCents":          s.EarnedCents,
+		"pendingEarningsCents": s.PendingEarningsCents,
+		"feesPaidCents":        s.FeesPaidCents,
+	})
+}
+
+func (h *TransactionHandler) writeDetail(w http.ResponseWriter, r *http.Request, txID int64, status int) {
+	userID, _ := userIDFrom(r.Context())
+	d, err := h.history.Get(r.Context(), userID, txID)
+	if err != nil {
+		writeTransactionErr(w, err)
+		return
+	}
+	writeJSON(w, status, toTransactionDetailResponse(d, userID))
+}
+
+func optInt64Value(s string) (int64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	return strconv.ParseInt(s, 10, 64)
 }
 
 func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
@@ -93,6 +156,8 @@ func writeTransactionErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, "insufficient balance")
 	case errors.Is(err, domain.ErrListingNotActive):
 		writeError(w, http.StatusConflict, "listing is no longer available")
+	case errors.Is(err, domain.ErrInvalidInput):
+		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, domain.ErrInvalidTransition):
 		writeError(w, http.StatusConflict, err.Error())
 	default:
@@ -140,5 +205,21 @@ func toTransactionResponse(t domain.Transaction, viewerID int64) transactionResp
 		FailureReason:       t.FailureReason,
 		CreatedAt:           t.CreatedAt,
 		UpdatedAt:           t.UpdatedAt,
+	}
+}
+
+type transactionDetailResponse struct {
+	transactionResponse
+	Item   inventoryItemResponse `json:"item"`
+	Buyer  publicUserResponse    `json:"buyer"`
+	Seller publicUserResponse    `json:"seller"`
+}
+
+func toTransactionDetailResponse(d domain.TransactionDetail, viewerID int64) transactionDetailResponse {
+	return transactionDetailResponse{
+		transactionResponse: toTransactionResponse(d.Transaction, viewerID),
+		Item:                toInventoryItemResponse(d.Item),
+		Buyer:               toPublicUserResponse(d.Buyer),
+		Seller:              toPublicUserResponse(d.Seller),
 	}
 }

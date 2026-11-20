@@ -80,3 +80,54 @@ SELECT id FROM transactions
 WHERE status = 'on_hold' AND hold_until <= @now::timestamptz
 ORDER BY hold_until
 LIMIT @max_rows;
+
+-- ===== Histórico =====
+
+-- Transações em que o usuário é comprador ou vendedor, com item e as duas partes.
+-- Paginação por cursor: "before_id" é o menor id da página anterior.
+-- name: ListUserTransactions :many
+SELECT sqlc.embed(transactions),
+       sqlc.embed(inventory_items),
+       buyer.display_name  AS buyer_name,
+       buyer.avatar_url    AS buyer_avatar_url,
+       seller.display_name AS seller_name,
+       seller.avatar_url   AS seller_avatar_url
+FROM transactions
+JOIN inventory_items ON inventory_items.id = transactions.item_id
+JOIN users AS buyer  ON buyer.id = transactions.buyer_id
+JOIN users AS seller ON seller.id = transactions.seller_id
+WHERE CASE sqlc.narg(role)::text
+          WHEN 'buyer'  THEN transactions.buyer_id = @user_id
+          WHEN 'seller' THEN transactions.seller_id = @user_id
+          ELSE transactions.buyer_id = @user_id OR transactions.seller_id = @user_id
+      END
+  AND (cardinality(@statuses::text[]) = 0 OR transactions.status = ANY (@statuses::text[]))
+  AND (sqlc.narg(before_id)::bigint IS NULL OR transactions.id < sqlc.narg(before_id)::bigint)
+ORDER BY transactions.id DESC
+LIMIT @max_rows;
+
+-- name: GetTransactionDetail :one
+SELECT sqlc.embed(transactions),
+       sqlc.embed(inventory_items),
+       buyer.display_name  AS buyer_name,
+       buyer.avatar_url    AS buyer_avatar_url,
+       seller.display_name AS seller_name,
+       seller.avatar_url   AS seller_avatar_url
+FROM transactions
+JOIN inventory_items ON inventory_items.id = transactions.item_id
+JOIN users AS buyer  ON buyer.id = transactions.buyer_id
+JOIN users AS seller ON seller.id = transactions.seller_id
+WHERE transactions.id = $1;
+
+-- Totais do usuário. Compras canceladas/falhas não contam (foram estornadas).
+-- A taxa sai da parte do vendedor.
+-- name: GetUserTransactionSummary :one
+SELECT
+    COUNT(*) FILTER (WHERE buyer_id = @user_id AND status NOT IN ('cancelled', 'failed'))                            AS purchases,
+    COALESCE(SUM(price_cents) FILTER (WHERE buyer_id = @user_id AND status NOT IN ('cancelled', 'failed')), 0)::bigint AS spent_cents,
+    COUNT(*) FILTER (WHERE seller_id = @user_id AND status = 'completed')                                              AS sales,
+    COALESCE(SUM(price_cents - fee_cents) FILTER (WHERE seller_id = @user_id AND status = 'completed'), 0)::bigint      AS earned_cents,
+    COALESCE(SUM(price_cents - fee_cents) FILTER (WHERE seller_id = @user_id AND status IN ('pending', 'sent', 'on_hold')), 0)::bigint AS pending_earnings_cents,
+    COALESCE(SUM(fee_cents) FILTER (WHERE seller_id = @user_id AND status = 'completed'), 0)::bigint                   AS fees_paid_cents
+FROM transactions
+WHERE buyer_id = @user_id OR seller_id = @user_id;

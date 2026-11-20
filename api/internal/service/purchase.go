@@ -250,12 +250,18 @@ func (s *PurchaseService) Transition(ctx context.Context, txID int64, to domain.
 
 // CancelByBuyer deixa o comprador desistir enquanto a troca não foi aceita.
 func (s *PurchaseService) CancelByBuyer(ctx context.Context, buyerID, txID int64) (domain.Transaction, error) {
-	tx, err := s.GetForUser(ctx, buyerID, txID)
+	tx, err := s.store.GetTransaction(ctx, txID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Transaction{}, domain.ErrNotFound
+	}
 	if err != nil {
-		return domain.Transaction{}, err
+		return domain.Transaction{}, fmt.Errorf("get transaction: %w", err)
+	}
+	if tx.SellerID == buyerID {
+		return domain.Transaction{}, domain.ErrForbidden // vendedor vê, mas não cancela
 	}
 	if tx.BuyerID != buyerID {
-		return domain.Transaction{}, domain.ErrForbidden
+		return domain.Transaction{}, domain.ErrNotFound // não revela transações alheias
 	}
 	return s.Transition(ctx, txID, domain.TxCancelled, Reason("cancelada pelo comprador"))
 }

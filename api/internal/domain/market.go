@@ -44,7 +44,8 @@ type ListingSearch struct {
 	PageSize int
 }
 
-type Seller struct {
+// PublicUser é o que pode ser mostrado de um usuário para outros (vendedor, comprador).
+type PublicUser struct {
 	ID          int64
 	DisplayName string
 	AvatarURL   string
@@ -53,7 +54,7 @@ type Seller struct {
 // MarketListing é uma listing vista no mercado: com item e vendedor.
 type MarketListing struct {
 	Listing
-	Seller Seller
+	Seller PublicUser
 }
 
 type MarketPage struct {

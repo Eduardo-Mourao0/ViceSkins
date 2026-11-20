@@ -63,3 +63,50 @@ type Transaction struct {
 func (t Transaction) SellerReceivesCents() int64 {
 	return t.PriceCents - t.FeeCents
 }
+
+// TransactionDetail é a transação com o item e as duas partes, para exibir.
+type TransactionDetail struct {
+	Transaction
+	Item   InventoryItem
+	Buyer  PublicUser
+	Seller PublicUser
+}
+
+// Filtros de status do histórico: um status específico ou um grupo.
+const (
+	TxFilterOpen   = "open"   // ainda em andamento
+	TxFilterClosed = "closed" // finalizadas
+)
+
+var (
+	OpenStatuses   = []TxStatus{TxPending, TxSent, TxOnHold}
+	ClosedStatuses = []TxStatus{TxCompleted, TxCancelled, TxFailed}
+)
+
+type TxRole string
+
+const (
+	RoleBuyer  TxRole = "buyer"
+	RoleSeller TxRole = "seller"
+)
+
+type TxHistoryFilter struct {
+	Role   TxRole // vazio = comprador ou vendedor
+	Status string // vazio, um TxStatus, "open" ou "closed"
+	Before int64  // cursor: id da última transação já vista (0 = do começo)
+	Limit  int
+}
+
+type TxHistoryPage struct {
+	Transactions []TransactionDetail
+	NextCursor   *int64 // nil = acabou
+}
+
+type TxSummary struct {
+	Purchases            int64
+	SpentCents           int64
+	Sales                int64
+	EarnedCents          int64
+	PendingEarningsCents int64
+	FeesPaidCents        int64
+}

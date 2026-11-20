@@ -138,7 +138,10 @@ function BuyFlow({
         <TxProgress status={tx.status} />
         <p className="text-sm text-muted">{tx.failureReason ? `${info.hint} (${tx.failureReason})` : info.hint}</p>
         {cancel.error && <Alert>{cancel.error.message}</Alert>}
-        <div className="flex justify-end gap-2">
+        <div className="flex items-center justify-end gap-2">
+          <Link href={`/transactions/${tx.id}`} className="mr-auto text-sm text-cyan-soft hover:underline">
+            Ver detalhes
+          </Link>
           {canCancel && (
             <Button variant="danger" onClick={() => cancel.mutate(tx.id)} loading={cancel.isPending}>
               Cancelar compra

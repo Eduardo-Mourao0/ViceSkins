@@ -120,6 +120,75 @@ func (q *Queries) GetTransaction(ctx context.Context, id int64) (Transaction, er
 	return i, err
 }
 
+const getTransactionDetail = `-- name: GetTransactionDetail :one
+SELECT transactions.id, transactions.listing_id, transactions.buyer_id, transactions.seller_id, transactions.item_id, transactions.price_cents, transactions.fee_cents, transactions.status, transactions.trade_offer_id, transactions.hold_until, transactions.failure_reason, transactions.created_at, transactions.updated_at,
+       inventory_items.id, inventory_items.owner_id, inventory_items.asset_id, inventory_items.class_id, inventory_items.instance_id, inventory_items.market_hash_name, inventory_items.name, inventory_items.item_type, inventory_items.weapon, inventory_items.rarity, inventory_items.rarity_color, inventory_items.exterior, inventory_items.float_value, inventory_items.paint_seed, inventory_items.icon_url, inventory_items.stickers, inventory_items.tradable, inventory_items.marketable, inventory_items.removed_at, inventory_items.created_at, inventory_items.updated_at,
+       buyer.display_name  AS buyer_name,
+       buyer.avatar_url    AS buyer_avatar_url,
+       seller.display_name AS seller_name,
+       seller.avatar_url   AS seller_avatar_url
+FROM transactions
+JOIN inventory_items ON inventory_items.id = transactions.item_id
+JOIN users AS buyer  ON buyer.id = transactions.buyer_id
+JOIN users AS seller ON seller.id = transactions.seller_id
+WHERE transactions.id = $1
+`
+
+type GetTransactionDetailRow struct {
+	Transaction     Transaction
+	InventoryItem   InventoryItem
+	BuyerName       string
+	BuyerAvatarURL  string
+	SellerName      string
+	SellerAvatarURL string
+}
+
+func (q *Queries) GetTransactionDetail(ctx context.Context, id int64) (GetTransactionDetailRow, error) {
+	row := q.db.QueryRow(ctx, getTransactionDetail, id)
+	var i GetTransactionDetailRow
+	err := row.Scan(
+		&i.Transaction.ID,
+		&i.Transaction.ListingID,
+		&i.Transaction.BuyerID,
+		&i.Transaction.SellerID,
+		&i.Transaction.ItemID,
+		&i.Transaction.PriceCents,
+		&i.Transaction.FeeCents,
+		&i.Transaction.Status,
+		&i.Transaction.TradeOfferID,
+		&i.Transaction.HoldUntil,
+		&i.Transaction.FailureReason,
+		&i.Transaction.CreatedAt,
+		&i.Transaction.UpdatedAt,
+		&i.InventoryItem.ID,
+		&i.InventoryItem.OwnerID,
+		&i.InventoryItem.AssetID,
+		&i.InventoryItem.ClassID,
+		&i.InventoryItem.InstanceID,
+		&i.InventoryItem.MarketHashName,
+		&i.InventoryItem.Name,
+		&i.InventoryItem.ItemType,
+		&i.InventoryItem.Weapon,
+		&i.InventoryItem.Rarity,
+		&i.InventoryItem.RarityColor,
+		&i.InventoryItem.Exterior,
+		&i.InventoryItem.FloatValue,
+		&i.InventoryItem.PaintSeed,
+		&i.InventoryItem.IconURL,
+		&i.InventoryItem.Stickers,
+		&i.InventoryItem.Tradable,
+		&i.InventoryItem.Marketable,
+		&i.InventoryItem.RemovedAt,
+		&i.InventoryItem.CreatedAt,
+		&i.InventoryItem.UpdatedAt,
+		&i.BuyerName,
+		&i.BuyerAvatarURL,
+		&i.SellerName,
+		&i.SellerAvatarURL,
+	)
+	return i, err
+}
+
 const getTransactionForUpdate = `-- name: GetTransactionForUpdate :one
 SELECT id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at FROM transactions
 WHERE id = $1
@@ -158,6 +227,43 @@ func (q *Queries) GetUserBalanceForUpdate(ctx context.Context, id int64) (int64,
 	var balance_cents int64
 	err := row.Scan(&balance_cents)
 	return balance_cents, err
+}
+
+const getUserTransactionSummary = `-- name: GetUserTransactionSummary :one
+SELECT
+    COUNT(*) FILTER (WHERE buyer_id = $1 AND status NOT IN ('cancelled', 'failed'))                            AS purchases,
+    COALESCE(SUM(price_cents) FILTER (WHERE buyer_id = $1 AND status NOT IN ('cancelled', 'failed')), 0)::bigint AS spent_cents,
+    COUNT(*) FILTER (WHERE seller_id = $1 AND status = 'completed')                                              AS sales,
+    COALESCE(SUM(price_cents - fee_cents) FILTER (WHERE seller_id = $1 AND status = 'completed'), 0)::bigint      AS earned_cents,
+    COALESCE(SUM(price_cents - fee_cents) FILTER (WHERE seller_id = $1 AND status IN ('pending', 'sent', 'on_hold')), 0)::bigint AS pending_earnings_cents,
+    COALESCE(SUM(fee_cents) FILTER (WHERE seller_id = $1 AND status = 'completed'), 0)::bigint                   AS fees_paid_cents
+FROM transactions
+WHERE buyer_id = $1 OR seller_id = $1
+`
+
+type GetUserTransactionSummaryRow struct {
+	Purchases            int64
+	SpentCents           int64
+	Sales                int64
+	EarnedCents          int64
+	PendingEarningsCents int64
+	FeesPaidCents        int64
+}
+
+// Totais do usuário. Compras canceladas/falhas não contam (foram estornadas).
+// A taxa sai da parte do vendedor.
+func (q *Queries) GetUserTransactionSummary(ctx context.Context, userID int64) (GetUserTransactionSummaryRow, error) {
+	row := q.db.QueryRow(ctx, getUserTransactionSummary, userID)
+	var i GetUserTransactionSummaryRow
+	err := row.Scan(
+		&i.Purchases,
+		&i.SpentCents,
+		&i.Sales,
+		&i.EarnedCents,
+		&i.PendingEarningsCents,
+		&i.FeesPaidCents,
+	)
+	return i, err
 }
 
 const listDueHolds = `-- name: ListDueHolds :many
@@ -219,6 +325,114 @@ func (q *Queries) ListTransactionIDsByStatus(ctx context.Context, arg ListTransa
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserTransactions = `-- name: ListUserTransactions :many
+
+SELECT transactions.id, transactions.listing_id, transactions.buyer_id, transactions.seller_id, transactions.item_id, transactions.price_cents, transactions.fee_cents, transactions.status, transactions.trade_offer_id, transactions.hold_until, transactions.failure_reason, transactions.created_at, transactions.updated_at,
+       inventory_items.id, inventory_items.owner_id, inventory_items.asset_id, inventory_items.class_id, inventory_items.instance_id, inventory_items.market_hash_name, inventory_items.name, inventory_items.item_type, inventory_items.weapon, inventory_items.rarity, inventory_items.rarity_color, inventory_items.exterior, inventory_items.float_value, inventory_items.paint_seed, inventory_items.icon_url, inventory_items.stickers, inventory_items.tradable, inventory_items.marketable, inventory_items.removed_at, inventory_items.created_at, inventory_items.updated_at,
+       buyer.display_name  AS buyer_name,
+       buyer.avatar_url    AS buyer_avatar_url,
+       seller.display_name AS seller_name,
+       seller.avatar_url   AS seller_avatar_url
+FROM transactions
+JOIN inventory_items ON inventory_items.id = transactions.item_id
+JOIN users AS buyer  ON buyer.id = transactions.buyer_id
+JOIN users AS seller ON seller.id = transactions.seller_id
+WHERE CASE $1::text
+          WHEN 'buyer'  THEN transactions.buyer_id = $2
+          WHEN 'seller' THEN transactions.seller_id = $2
+          ELSE transactions.buyer_id = $2 OR transactions.seller_id = $2
+      END
+  AND (cardinality($3::text[]) = 0 OR transactions.status = ANY ($3::text[]))
+  AND ($4::bigint IS NULL OR transactions.id < $4::bigint)
+ORDER BY transactions.id DESC
+LIMIT $5
+`
+
+type ListUserTransactionsParams struct {
+	Role     *string
+	UserID   int64
+	Statuses []string
+	BeforeID *int64
+	MaxRows  int32
+}
+
+type ListUserTransactionsRow struct {
+	Transaction     Transaction
+	InventoryItem   InventoryItem
+	BuyerName       string
+	BuyerAvatarURL  string
+	SellerName      string
+	SellerAvatarURL string
+}
+
+// ===== Histórico =====
+// Transações em que o usuário é comprador ou vendedor, com item e as duas partes.
+// Paginação por cursor: "before_id" é o menor id da página anterior.
+func (q *Queries) ListUserTransactions(ctx context.Context, arg ListUserTransactionsParams) ([]ListUserTransactionsRow, error) {
+	rows, err := q.db.Query(ctx, listUserTransactions,
+		arg.Role,
+		arg.UserID,
+		arg.Statuses,
+		arg.BeforeID,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUserTransactionsRow
+	for rows.Next() {
+		var i ListUserTransactionsRow
+		if err := rows.Scan(
+			&i.Transaction.ID,
+			&i.Transaction.ListingID,
+			&i.Transaction.BuyerID,
+			&i.Transaction.SellerID,
+			&i.Transaction.ItemID,
+			&i.Transaction.PriceCents,
+			&i.Transaction.FeeCents,
+			&i.Transaction.Status,
+			&i.Transaction.TradeOfferID,
+			&i.Transaction.HoldUntil,
+			&i.Transaction.FailureReason,
+			&i.Transaction.CreatedAt,
+			&i.Transaction.UpdatedAt,
+			&i.InventoryItem.ID,
+			&i.InventoryItem.OwnerID,
+			&i.InventoryItem.AssetID,
+			&i.InventoryItem.ClassID,
+			&i.InventoryItem.InstanceID,
+			&i.InventoryItem.MarketHashName,
+			&i.InventoryItem.Name,
+			&i.InventoryItem.ItemType,
+			&i.InventoryItem.Weapon,
+			&i.InventoryItem.Rarity,
+			&i.InventoryItem.RarityColor,
+			&i.InventoryItem.Exterior,
+			&i.InventoryItem.FloatValue,
+			&i.InventoryItem.PaintSeed,
+			&i.InventoryItem.IconURL,
+			&i.InventoryItem.Stickers,
+			&i.InventoryItem.Tradable,
+			&i.InventoryItem.Marketable,
+			&i.InventoryItem.RemovedAt,
+			&i.InventoryItem.CreatedAt,
+			&i.InventoryItem.UpdatedAt,
+			&i.BuyerName,
+			&i.BuyerAvatarURL,
+			&i.SellerName,
+			&i.SellerAvatarURL,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

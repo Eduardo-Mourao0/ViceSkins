@@ -1,6 +1,12 @@
 "use client";
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { api, isApiError } from "./api";
 import type {
   Inventory,
@@ -9,7 +15,12 @@ import type {
   MarketListing,
   MarketPage,
   Transaction,
+  TransactionDetail,
+  TxPage,
+  TxRoleFilter,
   TxStatus,
+  TxStatusFilter,
+  TxSummary,
   User,
   Wallet,
   WalletEntry,
@@ -31,7 +42,7 @@ const FINAL: TxStatus[] = ["completed", "cancelled", "failed"];
 export function useTransaction(id: number | null) {
   return useQuery({
     queryKey: keys.transaction(id ?? 0),
-    queryFn: () => api<Transaction>(`/transactions/${id}`),
+    queryFn: () => api<TransactionDetail>(`/transactions/${id}`),
     enabled: id !== null,
     refetchInterval: (q) => (q.state.data && FINAL.includes(q.state.data.status) ? false : 3_000),
   });
@@ -41,21 +52,27 @@ export function useTransaction(id: number | null) {
 function useInvalidateMoneyViews() {
   const qc = useQueryClient();
   return () => {
-    for (const key of [keys.me, keys.wallet, keys.inventory, ["market"], ["listing"], ["my-listings"]]) {
+    for (const key of [
+      keys.me,
+      keys.wallet,
+      keys.inventory,
+      ["market"],
+      ["listing"],
+      ["my-listings"],
+      ["transactions"],
+      ["tx-summary"],
+    ]) {
       qc.invalidateQueries({ queryKey: key });
     }
   };
 }
 
 export function useBuy() {
-  const qc = useQueryClient();
   const invalidate = useInvalidateMoneyViews();
   return useMutation({
+    // A resposta é a transação "crua"; o detalhe (com item e partes) vem do useTransaction.
     mutationFn: (listingId: number) => api<Transaction>(`/listings/${listingId}/buy`, { method: "POST" }),
-    onSuccess: (tx) => {
-      qc.setQueryData(keys.transaction(tx.id), tx);
-      invalidate();
-    },
+    onSuccess: invalidate,
   });
 }
 
@@ -63,7 +80,7 @@ export function useCancelTransaction() {
   const qc = useQueryClient();
   const invalidate = useInvalidateMoneyViews();
   return useMutation({
-    mutationFn: (txId: number) => api<Transaction>(`/transactions/${txId}/cancel`, { method: "POST" }),
+    mutationFn: (txId: number) => api<TransactionDetail>(`/transactions/${txId}/cancel`, { method: "POST" }),
     onSuccess: (tx) => {
       qc.setQueryData(keys.transaction(tx.id), tx);
       invalidate();
@@ -192,5 +209,28 @@ export function useCancelListing() {
     mutationFn: (listingId: number) =>
       api<Listing>(`/listings/${listingId}/cancel`, { method: "POST" }),
     onSuccess: invalidate,
+  });
+}
+
+/** Histórico paginado por cursor ("carregar mais"). */
+export function useTransactions(role: TxRoleFilter, status: TxStatusFilter) {
+  return useInfiniteQuery({
+    queryKey: ["transactions", role, status],
+    queryFn: ({ pageParam }) => {
+      const qs = new URLSearchParams({ limit: "20" });
+      if (role !== "all") qs.set("role", role);
+      if (status !== "all") qs.set("status", status);
+      if (pageParam) qs.set("before", String(pageParam));
+      return api<TxPage>(`/me/transactions?${qs}`);
+    },
+    initialPageParam: 0,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+}
+
+export function useTxSummary() {
+  return useQuery({
+    queryKey: ["tx-summary"],
+    queryFn: () => api<TxSummary>("/me/transactions/summary"),
   });
 }

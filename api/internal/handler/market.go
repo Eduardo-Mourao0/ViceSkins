@@ -148,15 +148,15 @@ func optInt(v url.Values, key string) (int, error) {
 
 // ---- DTOs ----
 
-type sellerResponse struct {
+type publicUserResponse struct {
 	ID          int64  `json:"id"`
 	DisplayName string `json:"displayName"`
 	AvatarURL   string `json:"avatarUrl"`
 }
 
 type marketListingResponse struct {
-	listingResponse                // embedding: os campos de listingResponse sobem para o mesmo nível no JSON
-	Seller          sellerResponse `json:"seller"`
+	listingResponse                    // embedding: os campos de listingResponse sobem para o mesmo nível no JSON
+	Seller          publicUserResponse `json:"seller"`
 }
 
 type marketPageResponse struct {
@@ -169,10 +169,10 @@ type marketPageResponse struct {
 func toMarketListingResponse(l domain.MarketListing) marketListingResponse {
 	return marketListingResponse{
 		listingResponse: toListingResponse(l.Listing),
-		Seller: sellerResponse{
-			ID:          l.Seller.ID,
-			DisplayName: l.Seller.DisplayName,
-			AvatarURL:   l.Seller.AvatarURL,
-		},
+		Seller:          toPublicUserResponse(l.Seller),
 	}
+}
+
+func toPublicUserResponse(u domain.PublicUser) publicUserResponse {
+	return publicUserResponse{ID: u.ID, DisplayName: u.DisplayName, AvatarURL: u.AvatarURL}
 }

@@ -52,6 +52,8 @@ func NewRouter(d Deps) http.Handler {
 		r.Post("/wallet/deposits", d.Wallet.Deposit)
 
 		r.Post("/listings/{id}/buy", d.Transactions.Buy)
+		r.Get("/me/transactions", d.Transactions.List)
+		r.Get("/me/transactions/summary", d.Transactions.Summary)
 		r.Get("/transactions/{id}", d.Transactions.Get)
 		r.Post("/transactions/{id}/cancel", d.Transactions.Cancel)
 	})

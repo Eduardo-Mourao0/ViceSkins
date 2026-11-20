@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Suspense } from "react";
 import { useLogout, useMe } from "@/lib/queries";
 import { formatPrice } from "@/lib/format";
 import { Button, SteamLoginButton } from "./ui";
@@ -11,6 +12,7 @@ const nav = [
   { href: "/market", label: "Mercado", public: true },
   { href: "/inventory", label: "Inventário", public: false },
   { href: "/my-listings", label: "Meus anúncios", public: false },
+  { href: "/transactions", label: "Transações", public: false },
   { href: "/wallet", label: "Carteira", public: false },
 ];
 
@@ -23,9 +25,39 @@ export function Logo() {
   );
 }
 
+type NavItem = (typeof nav)[number];
+type NavVariant = "desktop" | "mobile";
+
+function NavList({ items, pathname, variant }: { items: NavItem[]; pathname: string; variant: NavVariant }) {
+  return items.map((n) => {
+    const active = pathname.startsWith(n.href);
+    const look = active ? "bg-ink-700 text-text" : variant === "desktop" ? "text-muted hover:text-text" : "text-muted";
+    return (
+      <Link key={n.href} href={n.href} className={`rounded-md px-3 py-1.5 text-sm transition ${look}`}>
+        {n.label}
+      </Link>
+    );
+  });
+}
+
+// usePathname só é conhecido na requisição em rotas dinâmicas (/transactions/[id]).
+// Isolado aqui dentro de um Suspense, o resto do header continua pré-renderizado;
+// o fallback mostra os mesmos links, só sem o destaque do item ativo.
+function ActiveNavList(props: { items: NavItem[]; variant: NavVariant }) {
+  return <NavList {...props} pathname={usePathname()} />;
+}
+
+function Nav({ items, variant }: { items: NavItem[]; variant: NavVariant }) {
+  return (
+    <Suspense fallback={<NavList items={items} variant={variant} pathname="" />}>
+      <ActiveNavList items={items} variant={variant} />
+    </Suspense>
+  );
+}
+
 export function Header() {
-  const pathname = usePathname();
   const { data: me, isPending } = useMe();
+  const items = nav.filter((n) => n.public || me);
   const logout = useLogout();
 
   return (
@@ -36,20 +68,7 @@ export function Header() {
         <Logo />
 
         <nav className="hidden gap-1 sm:flex">
-          {nav.filter((n) => n.public || me).map((n) => {
-            const active = pathname.startsWith(n.href);
-            return (
-              <Link
-                key={n.href}
-                href={n.href}
-                className={`rounded-md px-3 py-1.5 text-sm transition ${
-                  active ? "bg-ink-700 text-text" : "text-muted hover:text-text"
-                }`}
-              >
-                {n.label}
-              </Link>
-            );
-          })}
+          <Nav items={items} variant="desktop" />
         </nav>
 
         <div className="ml-auto flex items-center gap-3">
@@ -87,18 +106,8 @@ export function Header() {
         </div>
       </div>
 
-      <nav className="flex gap-1 border-t border-line/60 px-4 py-2 sm:hidden">
-        {nav.filter((n) => n.public || me).map((n) => (
-          <Link
-            key={n.href}
-            href={n.href}
-            className={`rounded-md px-3 py-1.5 text-sm ${
-              pathname.startsWith(n.href) ? "bg-ink-700 text-text" : "text-muted"
-            }`}
-          >
-            {n.label}
-          </Link>
-        ))}
+      <nav className="flex gap-1 overflow-x-auto border-t border-line/60 px-4 py-2 sm:hidden">
+        <Nav items={items} variant="mobile" />
       </nav>
     </header>
   );
