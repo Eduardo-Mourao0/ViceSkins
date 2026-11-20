@@ -99,7 +99,13 @@ export function ListingDialog({ listing, onClose }: { listing: MarketListing; on
               <Button disabled>Seu anúncio</Button>
             </div>
           ) : (
-            <BuyFlow listing={listing} balanceCents={me.balanceCents} hasTradeUrl={!!me.tradeUrl} onClose={onClose} />
+            <BuyFlow
+              listing={listing}
+              balanceCents={me.balanceCents}
+              hasTradeUrl={!!me.tradeUrl}
+              debtCents={me.debtCents}
+              onClose={onClose}
+            />
           )}
         </div>
       </div>
@@ -116,11 +122,13 @@ function BuyFlow({
   listing,
   balanceCents,
   hasTradeUrl,
+  debtCents,
   onClose,
 }: {
   listing: MarketListing;
   balanceCents: number;
   hasTradeUrl: boolean;
+  debtCents: number;
   onClose: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -173,13 +181,22 @@ function BuyFlow({
       <div className="flex items-center justify-between gap-4">
         <Price cents={listing.priceCents} />
         {!confirming && (
-          <Button onClick={() => setConfirming(true)} disabled={insufficient || !hasTradeUrl}>
+          <Button onClick={() => setConfirming(true)} disabled={insufficient || !hasTradeUrl || debtCents > 0}>
             Comprar
           </Button>
         )}
       </div>
 
       {!hasTradeUrl && <TradeURLNotice action="comprar" />}
+
+      {debtCents > 0 && (
+        <Alert tone="warning">
+          Você tem uma dívida de {formatPrice(debtCents)} com a plataforma. Faça um depósito para quitá-la antes de comprar.{" "}
+          <Link href="/wallet" className="underline underline-offset-2">
+            Carteira
+          </Link>
+        </Alert>
+      )}
 
       {hasTradeUrl && insufficient && (
         <Alert tone="warning">

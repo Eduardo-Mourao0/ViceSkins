@@ -76,7 +76,7 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 }
 
 const getBuyerForUpdate = `-- name: GetBuyerForUpdate :one
-SELECT balance_cents, trade_url FROM users
+SELECT balance_cents, trade_url, debt_cents FROM users
 WHERE id = $1
 FOR UPDATE
 `
@@ -84,12 +84,13 @@ FOR UPDATE
 type GetBuyerForUpdateRow struct {
 	BalanceCents int64
 	TradeURL     *string
+	DebtCents    int64
 }
 
 func (q *Queries) GetBuyerForUpdate(ctx context.Context, id int64) (GetBuyerForUpdateRow, error) {
 	row := q.db.QueryRow(ctx, getBuyerForUpdate, id)
 	var i GetBuyerForUpdateRow
-	err := row.Scan(&i.BalanceCents, &i.TradeURL)
+	err := row.Scan(&i.BalanceCents, &i.TradeURL, &i.DebtCents)
 	return i, err
 }
 

@@ -28,4 +28,5 @@ var (
 	ErrFeatureDisabled   = errors.New("feature disabled on this server")
 	ErrCannotCancelOffer = errors.New("the trade offer was already sent and cannot be cancelled by the platform")
 	ErrTradeUnverified   = errors.New("could not verify the trade on steam right now")
+	ErrBuyerHasDebt      = errors.New("pay your debt before buying")
 )

@@ -9,6 +9,8 @@ import {
 } from "@tanstack/react-query";
 import { api, isApiError } from "./api";
 import type {
+  Dispute,
+  DisputeStatus,
   Inventory,
   Listing,
   ListingStatus,
@@ -101,9 +103,9 @@ export function useDeposit() {
   return useMutation({
     mutationFn: (amountCents: number) =>
       api<WalletEntry>("/wallet/deposits", { method: "POST", body: JSON.stringify({ amountCents }) }),
-    onSuccess: (entry) => {
-      // Atualiza o saldo do header na hora, sem esperar outra requisição.
-      qc.setQueryData<User | null>(keys.me, (me) => me && { ...me, balanceCents: entry.balanceAfterCents });
+    onSuccess: () => {
+      // O depósito pode quitar dívida (saldo final != valor depositado): busca de novo.
+      qc.invalidateQueries({ queryKey: keys.me });
       qc.invalidateQueries({ queryKey: keys.wallet });
     },
   });
@@ -301,5 +303,24 @@ export function useDeleteSteamAPIKey() {
   return useMutation({
     mutationFn: () => api<User>("/me/steam-api-key", { method: "DELETE" }),
     onSuccess: (me) => qc.setQueryData(keys.me, me),
+  });
+}
+
+export function useDisputes(status: DisputeStatus | "all") {
+  return useQuery({
+    queryKey: ["disputes", status],
+    queryFn: () =>
+      api<{ disputes: Dispute[] }>(`/admin/disputes${status === "all" ? "" : `?status=${status}`}`).then(
+        (r) => r.disputes,
+      ),
+  });
+}
+
+export function useDismissDispute() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, note }: { id: number; note: string }) =>
+      api<void>(`/admin/disputes/${id}/dismiss`, { method: "POST", body: JSON.stringify({ note }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["disputes"] }),
   });
 }

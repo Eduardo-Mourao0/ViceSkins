@@ -8,7 +8,7 @@ WHERE id = $1
 FOR UPDATE;
 
 -- name: GetBuyerForUpdate :one
-SELECT balance_cents, trade_url FROM users
+SELECT balance_cents, trade_url, debt_cents FROM users
 WHERE id = $1
 FOR UPDATE;
 

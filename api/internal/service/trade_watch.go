@@ -228,8 +228,8 @@ func (s *PurchaseService) ExpireDeadlines(ctx context.Context) error {
 
 // WatchClosedTrades vigia as trocas estornadas há pouco tempo. Se o item
 // aparece com o comprador depois do estorno (ele aceitou uma oferta que ficou
-// aberta), a transação é marcada para análise: o comprador teria item e
-// dinheiro. Nenhum dinheiro é movido automaticamente.
+// aberta), abre uma disputa: o comprador é cobrado de novo e o vendedor
+// recebe depois da proteção (ver dispute.go).
 func (s *PurchaseService) WatchClosedTrades(ctx context.Context) error {
 	now := s.now()
 	ids, err := s.store.ListClosedTradesToWatch(ctx, repository.ListClosedTradesToWatchParams{
@@ -246,9 +246,14 @@ func (s *PurchaseService) WatchClosedTrades(ctx context.Context) error {
 		if !ok || !delivered(obs) {
 			continue
 		}
-		slog.Warn("late delivery: item reached the buyer after the refund", "tx", id)
-		err := s.store.MarkLateDelivery(ctx, repository.MarkLateDeliveryParams{ID: id, Now: s.now()})
-		logJobErr("mark late delivery", id, err)
+		opened, err := s.openDispute(ctx, id, obs)
+		if err != nil {
+			slog.Error("open dispute", "tx", id, "err", err)
+			continue
+		}
+		if opened {
+			slog.Warn("late delivery: dispute opened, buyer charged again", "tx", id)
+		}
 	}
 	return nil
 }

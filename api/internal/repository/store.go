@@ -52,9 +52,46 @@ func (s *Store) Deposit(ctx context.Context, userID, amountCents int64, descript
 	err := s.ExecTx(ctx, func(q *Queries) error {
 		var err error
 		entry, err = ApplyWalletEntry(ctx, q, userID, amountCents, "deposit", nil, description)
-		return err
+		if err != nil {
+			return err
+		}
+		return PayDebt(ctx, q, userID)
 	})
 	return entry, err
+}
+
+// PayDebt usa o saldo do usuário para quitar o que ele deve à plataforma
+// (estornos que não puderam ser cobrados de volta). Roda dentro da transação
+// do depósito: o dinheiro novo paga a dívida antes de virar saldo livre.
+func PayDebt(ctx context.Context, q *Queries, userID int64) error {
+	m, err := q.GetUserMoneyForUpdate(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("lock user: %w", err)
+	}
+	pay := min(m.DebtCents, m.BalanceCents)
+	if pay <= 0 {
+		return nil
+	}
+	if err := TransferWithPlatform(ctx, q, userID, -pay, "debt_payment", "debt_recovery", nil, "Pagamento de dívida"); err != nil {
+		return err
+	}
+	return q.AddDebt(ctx, AddDebtParams{UserID: userID, AmountCents: -pay})
+}
+
+// TransferWithPlatform move dinheiro entre um usuário e a conta da plataforma
+// em dupla entrada: duas linhas no ledger, na mesma transação SQL, que somam
+// zero. userAmount > 0 credita o usuário (e debita a plataforma); < 0 o
+// contrário. A plataforma é sempre travada por último (ordem fixa de locks).
+func TransferWithPlatform(ctx context.Context, q *Queries, userID, userAmount int64, userKind, platformKind string, txID *int64, description string) error {
+	platform, err := q.GetPlatformAccountID(ctx)
+	if err != nil {
+		return fmt.Errorf("platform account: %w", err)
+	}
+	if _, err := ApplyWalletEntry(ctx, q, userID, userAmount, userKind, txID, description); err != nil {
+		return err
+	}
+	_, err = ApplyWalletEntry(ctx, q, platform, -userAmount, platformKind, txID, description)
+	return err
 }
 
 // ApplyWalletEntry é a ÚNICA forma de mexer no saldo: altera users.balance_cents

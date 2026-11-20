@@ -19,6 +19,7 @@ Projeto de portfólio com foco no backend: **Go**, **PostgreSQL** e as partes di
 - **Compra atômica**: dois compradores no mesmo item ao mesmo tempo → exatamente um leva
 - **Entrega simulada** com máquina de estados `pending → sent → on_hold → completed`, estorno automático em falhas e pagamento ao vendedor só depois da proteção de troca
 - **Prazos** por etapa: vendedor que não envia ou comprador que não aceita a tempo → compra cancelada e estornada
+- **Disputas** de entrega tardia: cobrança automática do comprador, garantia da plataforma para o vendedor e painel de admin
 - **Histórico** de compras e vendas com resumo e acompanhamento ao vivo
 - **Modo demonstração**: seed com usuários e anúncios, e login sem Steam para testar tudo localmente
 
@@ -100,6 +101,7 @@ stateDiagram-v2
 **Saldo auditável**
 - Toda movimentação é uma linha imutável em `wallet_entries`, com o saldo resultante.
 - `users.balance_cents` é um cache de leitura, sempre atualizado na mesma transação. A invariante `saldo = soma do ledger` é verificada nos testes.
+- **A plataforma tem conta própria no ledger:** recebe as taxas, as cobranças de disputa e as dívidas recuperadas, e paga as garantias. Todo movimento entre um usuário e a plataforma é em **dupla entrada** (duas linhas na mesma transação SQL, somando zero), e só a conta da plataforma pode ficar negativa, quando garante um vendedor antes de recuperar o dinheiro do comprador.
 
 **Concorrência e defesa em camadas**
 - A compra trava a listing e o saldo com `SELECT ... FOR UPDATE`, sempre nessa ordem, para evitar deadlock.
@@ -130,7 +132,7 @@ stateDiagram-v2
 - **API key do vendedor (opcional):** com ela, a oferta é acompanhada pela Web API oficial (`IEconService`). Isso dá detecção do envio, **horário real da troca** (a proteção conta a partir dele) e cancelamento automático. A key é validada na Steam, guardada com **AES-256-GCM** (com o id do dono como dado associado, para não poder ser copiada para outra conta) e nunca volta em resposta ou log.
 - **Regras conservadoras:** estorno só com o item comprovadamente no vendedor; entrega só com prova positiva; pagamento só se, no fim da proteção, o item não voltou ao vendedor. Sem resposta da Steam, nada acontece.
 - **Observação velha não vale:** toda ação tomada a partir do que se viu na Steam exige que o status ainda seja o observado (`From(status)`). Isso evita, por exemplo, estornar uma troca que foi aceita entre a consulta e a ação. Há um teste determinístico para essa corrida, validado com mutação.
-- **Entrega tardia:** sem API key, uma oferta pode ficar aberta depois de um estorno por prazo. Se o item aparecer no comprador, a transação é marcada para análise.
+- **Entrega tardia vira disputa:** sem API key, uma oferta pode ficar aberta depois de um estorno por prazo. Se o item aparecer no comprador, uma disputa é aberta automaticamente: o comprador é **cobrado de novo** (o que faltar no saldo vira **dívida**, quitada pelos próximos depósitos e bloqueando compras), e o vendedor recebe no fim da proteção da troca tardia, **garantido pela plataforma**. Um admin pode arquivar a disputa (com nota obrigatória) se a detecção estiver errada.
 
 **Steam**
 - O inventário fica em cache no banco, e o refresh tem cooldown reservado de forma atômica (`UPDATE ... WHERE refresh_at < cutoff`).
@@ -190,6 +192,7 @@ TRADE_HOLD_DURATION=1m docker compose up -d api
 | `TRADE_PROVIDER` | `simulated` | `steam` liga a verificação real (inventário público + API key opcional) |
 | `TRADE_CHECK_INTERVAL` | `5s` / `2m` | Intervalo entre verificações de cada troca (simulado / steam) |
 | `SECRETS_KEY` | valor de dev | Chave mestra (base64, 32 bytes) que criptografa as API keys. Obrigatória com `steam` |
+| `ADMIN_STEAM_IDS` | `demo-1` no compose | SteamIDs dos admins (resolvem disputas). Contas demo são recusadas com `COOKIE_SECURE=true` |
 
 ## Testes
 
@@ -199,7 +202,7 @@ go test ./...           # tudo, inclusive integração (sobe um Postgres via Doc
 go test -short ./...    # só unitários, sem Docker
 ```
 
-Os testes de integração rodam contra **PostgreSQL real** (testcontainers) e cobrem:
+Os testes de integração rodam contra **PostgreSQL real** (testcontainers). Cada teste ganha um banco próprio, clonado de um template já migrado (`CREATE DATABASE ... TEMPLATE`), porque os jobs olham o banco inteiro e um teste não pode agir sobre os dados de outro. Eles cobrem:
 
 - 15 rodadas de **20 compradores simultâneos** na mesma listing → sempre exatamente 1 vence, e os outros não são cobrados
 - o mesmo comprador fazendo compras simultâneas além do saldo → só as que cabem passam
@@ -210,6 +213,8 @@ Os testes de integração rodam contra **PostgreSQL real** (testcontainers) e co
 - o ciclo completo, estornos, reversão durante a proteção e transições inválidas
 - todos os pares (de → para) da máquina de estados
 - paginação por cursor estável com dados novos chegando entre páginas
+- disputas: cobrança, garantia da plataforma com dívida recuperada nos depósitos, reversão, arquivamento pelo admin e 10 workers detectando a mesma entrega tardia → uma disputa e uma cobrança só
+- **conservação do dinheiro:** em cada cenário, soma dos saldos (inclusive o da plataforma) + valor retido em compras em andamento = soma dos depósitos
 
 O teste de concorrência da compra foi validado com **mutação**. Com o `FOR UPDATE` removido de propósito, ele falha em todas as execuções. A versão inicial, com uma rodada só, pegava o bug apenas às vezes.
 
@@ -223,6 +228,7 @@ O teste de concorrência da compra foi validado com **mutação**. Com o `FOR UP
 | `PUT` | `/me/trade-url` | ✓ | Cadastra a trade URL (validada: precisa ser da própria conta Steam) |
 | `PUT` | `/me/steam-api-key` · `DELETE` | ✓ | Cadastra (validada na Steam, guardada criptografada) · remove a API key |
 | `POST` | `/transactions/{id}/sent` | ✓ | Vendedor avisa que enviou a oferta |
+| `GET` | `/admin/disputes` · `POST /admin/disputes/{id}/dismiss` | admin | Disputas de entrega tardia · arquivar (com nota) |
 | `GET` | `/me/inventory` · `POST /me/inventory/refresh` | ✓ | Inventário em cache · sincronizar com a Steam |
 | `GET` | `/listings` | | Mercado: `q`, `minPrice`, `maxPrice`, `wear`, `minFloat`, `maxFloat`, `sort`, `page` |
 | `GET` | `/listings/{id}` | | Detalhe do anúncio |
@@ -258,7 +264,6 @@ web/                    Next.js (App Router)
 
 - **Itens sem float sem API key:** caixas e stickers não têm impressão digital única, então anunciá-los exige a API key. Também não dá para detectar a reversão de um item sem float (ele volta com outro `asset_id`).
 - **Proteção de troca e inventário público:** ainda não confirmei se itens em proteção aparecem no inventário público do comprador. Se não aparecerem, sem API key a entrega só é confirmada no fim da proteção. As regras de estorno já tratam esse caso (nada é estornado com o item fora do vendedor).
-- **Entrega tardia:** é só marcada para análise; falta um fluxo de disputa.
 - **Depósitos reais:** integrar um gateway de pagamento e chaves de idempotência.
 - **Revogação de sessão:** hoje o JWT vale até expirar; sessões no banco permitiriam logout em todos os dispositivos.
 - **Preços de referência:** job buscando preços de mercado para sugerir o valor do anúncio.

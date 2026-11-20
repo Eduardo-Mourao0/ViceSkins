@@ -135,6 +135,8 @@ func toDomainUser(u repository.User) domain.User {
 		TradeURL:         u.TradeURL,
 		HasSteamAPIKey:   len(u.SteamAPIKeyEnc) > 0,
 		SteamAPIKeyLast4: u.SteamAPIKeyLast4,
+		Role:             u.Role,
+		DebtCents:        u.DebtCents,
 		CreatedAt:        u.CreatedAt,
 	}
 }

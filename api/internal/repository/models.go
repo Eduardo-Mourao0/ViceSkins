@@ -8,6 +8,23 @@ import (
 	"time"
 )
 
+type Dispute struct {
+	ID            int64
+	TransactionID int64
+	Status        string
+	DetectedAt    time.Time
+	RefundedAt    time.Time
+	Evidence      string
+	TradedAt      *time.Time
+	ChargedCents  int64
+	CoveredCents  int64
+	HoldUntil     time.Time
+	ResolvedAt    *time.Time
+	ResolvedBy    *int64
+	Note          *string
+	CreatedAt     time.Time
+}
+
 type InventoryItem struct {
 	ID             int64
 	OwnerID        int64
@@ -85,6 +102,9 @@ type User struct {
 	TradeURL           *string
 	SteamAPIKeyEnc     []byte
 	SteamAPIKeyLast4   *string
+	Role               string
+	IsPlatform         bool
+	DebtCents          int64
 }
 
 type WalletEntry struct {

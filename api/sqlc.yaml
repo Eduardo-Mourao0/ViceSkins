@@ -22,6 +22,7 @@ sql:
           seller_api_key_enc: SellerAPIKeyEnc
           seller_steam_id: SellerSteamID
           buyer_steam_id: BuyerSteamID
+          item_icon_url: ItemIconURL
         overrides:
           - db_type: timestamptz
             go_type: time.Time

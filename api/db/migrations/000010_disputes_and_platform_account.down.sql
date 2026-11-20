@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS disputes;
+DELETE FROM wallet_entries WHERE kind NOT IN ('deposit', 'purchase', 'sale', 'refund');
+ALTER TABLE wallet_entries DROP CONSTRAINT wallet_entries_kind_check;
+ALTER TABLE wallet_entries ADD CONSTRAINT wallet_entries_kind_check CHECK (kind IN ('deposit', 'purchase', 'sale', 'refund'));
+ALTER TABLE wallet_entries ADD CONSTRAINT wallet_entries_balance_after_cents_check CHECK (balance_after_cents >= 0);
+DELETE FROM users WHERE is_platform;
+DROP INDEX IF EXISTS users_one_platform;
+ALTER TABLE users DROP CONSTRAINT users_balance_cents_check;
+ALTER TABLE users ADD CONSTRAINT users_balance_cents_check CHECK (balance_cents >= 0);
+ALTER TABLE users DROP COLUMN debt_cents, DROP COLUMN is_platform, DROP COLUMN role;

@@ -15,6 +15,8 @@ type Deps struct {
 	Market       *MarketHandler
 	Wallet       *WalletHandler
 	Transactions *TransactionHandler
+	Admin        *AdminHandler
+	Users        UserGetter // RequireAdmin lê o papel do banco
 	Tokens       TokenIssuer
 	DevLogin     bool // registra o login de demonstração (só em dev)
 }
@@ -67,6 +69,13 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/transactions/{id}", d.Transactions.Get)
 		r.Post("/transactions/{id}/cancel", d.Transactions.Cancel)
 		r.Post("/transactions/{id}/sent", d.Transactions.MarkSent)
+
+		// Admin: papel conferido no banco a cada requisição.
+		r.Group(func(r chi.Router) {
+			r.Use(RequireAdmin(d.Users))
+			r.Get("/admin/disputes", d.Admin.ListDisputes)
+			r.Post("/admin/disputes/{id}/dismiss", d.Admin.DismissDispute)
+		})
 	})
 
 	return r

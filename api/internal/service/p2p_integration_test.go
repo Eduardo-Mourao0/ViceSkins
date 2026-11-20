@@ -283,7 +283,7 @@ func TestExpiryWaitsWhileTheItemIsUnaccounted(t *testing.T) {
 }
 
 // Sem API key, a oferta pode continuar aberta depois do estorno por prazo.
-// Se o comprador aceitar depois, a transação é marcada para análise.
+// Se o comprador aceitar depois, a transação é marcada e uma disputa é aberta.
 func TestLateDeliveryIsFlagged(t *testing.T) {
 	e := setupP2P(t)
 	e.provider.set(func(p *fakeProvider) { p.cannotCancel = true })
@@ -309,10 +309,12 @@ func TestLateDeliveryIsFlagged(t *testing.T) {
 	}
 	got, _ := e.svc.GetForUser(e.ctx, buyer, tx.ID)
 	if got.LateDeliveryAt == nil {
-		t.Fatal("late delivery must be flagged for review")
+		t.Fatal("late delivery must be flagged")
 	}
-	if got.Status != domain.TxFailed || e.balance(buyer) != 10_000 {
-		t.Fatal("flagging must not move money or change the status")
+	// A transação continua encerrada; o acerto é feito pela disputa
+	// (dispute_integration_test.go): o comprador é cobrado de novo.
+	if got.Status != domain.TxFailed || e.balance(buyer) != 5_000 {
+		t.Fatalf("status %s, buyer %d; want failed and the buyer charged again", got.Status, e.balance(buyer))
 	}
 }
 

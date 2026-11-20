@@ -169,6 +169,8 @@ func writeTransactionErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, "you cannot buy your own listing")
 	case errors.Is(err, domain.ErrTradeURLRequired):
 		writeError(w, http.StatusUnprocessableEntity, "set your steam trade url before buying")
+	case errors.Is(err, domain.ErrBuyerHasDebt):
+		writeError(w, http.StatusUnprocessableEntity, "you have a pending debt: make a deposit to pay it before buying")
 	case errors.Is(err, domain.ErrInsufficientBalance):
 		writeError(w, http.StatusUnprocessableEntity, "insufficient balance")
 	case errors.Is(err, domain.ErrListingNotActive):

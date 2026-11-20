@@ -62,6 +62,8 @@ services:
       TRADE_PROVIDER: ${TRADE_PROVIDER:-simulated}
       TRADE_CHECK_INTERVAL: ${TRADE_CHECK_INTERVAL:-}
       # Criptografa as API keys dos vendedores. Valor de dev: troque em produção.
+      # Quem resolve disputas (SteamIDs separados por vírgula). demo-1 só em dev.
+      ADMIN_STEAM_IDS: ${ADMIN_STEAM_IDS:-demo-1}
       SECRETS_KEY: ${SECRETS_KEY:-ZGV2LW9ubHktc2VjcmV0cy1rZXktY2hhbmdlLW1lISE=}
     ports:
       - "8080:8080"

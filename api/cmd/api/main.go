@@ -61,6 +61,11 @@ func run() error {
 		slog.Warn("STEAM_API_KEY not set: steam login will fail when fetching the profile")
 	}
 
+	// Papel de admin vem da configuração: quem sai da lista perde o papel.
+	if err := repository.New(pool).SyncAdmins(ctx, cfg.AdminSteamIDs); err != nil {
+		return fmt.Errorf("sync admins: %w", err)
+	}
+
 	// Montagem manual das dependências (o que o container de DI do Nest faz sozinho).
 	store := repository.NewStore(pool)
 	steamClient := steam.NewClient(cfg.SteamAPIKey, cfg.PublicAPIURL, cfg.PublicAPIURL+"/auth/steam/callback")
@@ -116,6 +121,7 @@ func run() error {
 	jobs.Every(jobsCtx, &jobsWG, "hold-release", 30*time.Second, purchaseSvc.ReleaseDueHolds)
 	jobs.Every(jobsCtx, &jobsWG, "expire-deadlines", 30*time.Second, purchaseSvc.ExpireDeadlines)
 	jobs.Every(jobsCtx, &jobsWG, "late-delivery-watch", time.Minute, purchaseSvc.WatchClosedTrades)
+	jobs.Every(jobsCtx, &jobsWG, "dispute-release", time.Minute, purchaseSvc.ReleaseDueDisputes)
 
 	router := handler.NewRouter(handler.Deps{
 		DB:           pool,
@@ -125,6 +131,8 @@ func run() error {
 		Market:       handler.NewMarketHandler(service.NewMarketService(store)),
 		Wallet:       handler.NewWalletHandler(service.NewWalletService(store)),
 		Transactions: handler.NewTransactionHandler(purchaseSvc, service.NewHistoryService(store)),
+		Admin:        handler.NewAdminHandler(purchaseSvc),
+		Users:        authSvc,
 		Tokens:       tokens,
 		DevLogin:     cfg.DevLogin,
 	})

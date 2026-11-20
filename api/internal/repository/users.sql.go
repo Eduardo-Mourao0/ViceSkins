@@ -22,7 +22,7 @@ func (q *Queries) GetSteamAPIKey(ctx context.Context, id int64) ([]byte, error) 
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at, trade_url, steam_api_key_enc, steam_api_key_last4 FROM users
+SELECT id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at, trade_url, steam_api_key_enc, steam_api_key_last4, role, is_platform, debt_cents FROM users
 WHERE id = $1
 `
 
@@ -42,12 +42,15 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.TradeURL,
 		&i.SteamAPIKeyEnc,
 		&i.SteamAPIKeyLast4,
+		&i.Role,
+		&i.IsPlatform,
+		&i.DebtCents,
 	)
 	return i, err
 }
 
 const listDemoUsers = `-- name: ListDemoUsers :many
-SELECT id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at, trade_url, steam_api_key_enc, steam_api_key_last4 FROM users
+SELECT id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at, trade_url, steam_api_key_enc, steam_api_key_last4, role, is_platform, debt_cents FROM users
 WHERE steam_id LIKE 'demo-%'
 ORDER BY id
 `
@@ -75,6 +78,9 @@ func (q *Queries) ListDemoUsers(ctx context.Context) ([]User, error) {
 			&i.TradeURL,
 			&i.SteamAPIKeyEnc,
 			&i.SteamAPIKeyLast4,
+			&i.Role,
+			&i.IsPlatform,
+			&i.DebtCents,
 		); err != nil {
 			return nil, err
 		}
@@ -90,7 +96,7 @@ const setSteamAPIKey = `-- name: SetSteamAPIKey :one
 UPDATE users
 SET steam_api_key_enc = $1, steam_api_key_last4 = $2, updated_at = now()
 WHERE id = $3
-RETURNING id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at, trade_url, steam_api_key_enc, steam_api_key_last4
+RETURNING id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at, trade_url, steam_api_key_enc, steam_api_key_last4, role, is_platform, debt_cents
 `
 
 type SetSteamAPIKeyParams struct {
@@ -115,6 +121,9 @@ func (q *Queries) SetSteamAPIKey(ctx context.Context, arg SetSteamAPIKeyParams) 
 		&i.TradeURL,
 		&i.SteamAPIKeyEnc,
 		&i.SteamAPIKeyLast4,
+		&i.Role,
+		&i.IsPlatform,
+		&i.DebtCents,
 	)
 	return i, err
 }
@@ -123,7 +132,7 @@ const setTradeURL = `-- name: SetTradeURL :one
 UPDATE users
 SET trade_url = $1, updated_at = now()
 WHERE id = $2
-RETURNING id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at, trade_url, steam_api_key_enc, steam_api_key_last4
+RETURNING id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at, trade_url, steam_api_key_enc, steam_api_key_last4, role, is_platform, debt_cents
 `
 
 type SetTradeURLParams struct {
@@ -147,6 +156,9 @@ func (q *Queries) SetTradeURL(ctx context.Context, arg SetTradeURLParams) (User,
 		&i.TradeURL,
 		&i.SteamAPIKeyEnc,
 		&i.SteamAPIKeyLast4,
+		&i.Role,
+		&i.IsPlatform,
+		&i.DebtCents,
 	)
 	return i, err
 }
@@ -158,7 +170,7 @@ ON CONFLICT (steam_id) DO UPDATE
 SET display_name = EXCLUDED.display_name,
     avatar_url   = EXCLUDED.avatar_url,
     updated_at   = now()
-RETURNING id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at, trade_url, steam_api_key_enc, steam_api_key_last4
+RETURNING id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at, trade_url, steam_api_key_enc, steam_api_key_last4, role, is_platform, debt_cents
 `
 
 type UpsertUserBySteamIDParams struct {
@@ -183,6 +195,9 @@ func (q *Queries) UpsertUserBySteamID(ctx context.Context, arg UpsertUserBySteam
 		&i.TradeURL,
 		&i.SteamAPIKeyEnc,
 		&i.SteamAPIKeyLast4,
+		&i.Role,
+		&i.IsPlatform,
+		&i.DebtCents,
 	)
 	return i, err
 }

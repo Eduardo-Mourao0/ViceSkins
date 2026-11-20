@@ -149,8 +149,11 @@ function TxDetail({ tx }: { tx: TransactionDetail }) {
 
           {tx.lateDeliveryAt && (
             <Alert tone="warning">
-              Em análise: o item chegou ao comprador depois de a compra ter sido estornada (
-              {formatDate(tx.lateDeliveryAt)}). A equipe vai revisar esta transação.
+              Entrega tardia: o item chegou ao comprador depois de a compra ter sido estornada (
+              {formatDate(tx.lateDeliveryAt)}).{" "}
+              {buying
+                ? "O valor foi cobrado de novo do seu saldo (o que faltou ficou como dívida)."
+                : "Você recebe o valor da venda no fim da proteção de troca, garantido pela plataforma."}
             </Alert>
           )}
 

@@ -9,6 +9,8 @@ export type User = {
   tradeUrl: string | null; // obrigatória para comprar e anunciar
   hasSteamApiKey: boolean; // a key em si nunca vem da API
   steamApiKeyLast4: string | null;
+  role: "user" | "admin";
+  debtCents: number; // deve à plataforma: não compra até pagar
 };
 
 export type Sticker = {
@@ -89,7 +91,18 @@ export type TxSummary = {
 export type TxRoleFilter = "all" | "buyer" | "seller";
 export type TxStatusFilter = "all" | "open" | "closed";
 
-export type WalletEntryKind = "deposit" | "purchase" | "sale" | "refund";
+export type WalletEntryKind =
+  | "deposit"
+  | "purchase"
+  | "sale"
+  | "refund"
+  | "fee"
+  | "dispute_charge"
+  | "dispute_collect"
+  | "dispute_payout"
+  | "dispute_refund"
+  | "debt_payment"
+  | "debt_recovery";
 
 export type WalletEntry = {
   id: number;
@@ -137,4 +150,31 @@ export type Listing = {
   createdAt: string;
   updatedAt: string;
   item?: InventoryItem;
+};
+
+export type DisputeStatus = "holding" | "settled" | "reversed" | "dismissed";
+
+/** Entrega tardia: o item chegou ao comprador depois do estorno. */
+export type Dispute = {
+  id: number;
+  status: DisputeStatus;
+  detectedAt: string;
+  refundedAt: string;
+  evidence: "fingerprint" | "offer";
+  tradedAt: string | null;
+  chargedCents: number;
+  coveredCents: number;
+  holdUntil: string;
+  resolvedAt: string | null;
+  resolvedBy: number | null;
+  note: string | null;
+  transactionId: number;
+  priceCents: number;
+  sellerReceivesCents: number;
+  failureReason: string | null;
+  itemName: string;
+  itemImageUrl: string;
+  buyerName: string;
+  buyerDebtCents: number;
+  sellerName: string;
 };

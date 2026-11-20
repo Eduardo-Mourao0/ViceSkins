@@ -9,6 +9,15 @@ const (
 	EntryPurchase WalletEntryKind = "purchase" // débito: comprou um item
 	EntrySale     WalletEntryKind = "sale"     // crédito: vendeu um item (já sem a taxa)
 	EntryRefund   WalletEntryKind = "refund"   // crédito: compra cancelada/falhou
+	EntryFee      WalletEntryKind = "fee"      // plataforma: taxa de uma venda concluída
+
+	// Dupla entrada com a conta da plataforma (ver migration 000010).
+	EntryDisputeCharge  WalletEntryKind = "dispute_charge"  // débito: item recebido depois do estorno
+	EntryDisputeCollect WalletEntryKind = "dispute_collect" // plataforma: recebe essa cobrança
+	EntryDisputePayout  WalletEntryKind = "dispute_payout"  // plataforma: paga o vendedor da disputa
+	EntryDisputeRefund  WalletEntryKind = "dispute_refund"  // disputa desfeita: cobrança devolvida
+	EntryDebtPayment    WalletEntryKind = "debt_payment"    // débito: pagamento de dívida
+	EntryDebtRecovery   WalletEntryKind = "debt_recovery"   // plataforma: recebe o pagamento da dívida
 )
 
 // Limites do depósito fake, em centavos.

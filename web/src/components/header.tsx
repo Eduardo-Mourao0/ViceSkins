@@ -58,7 +58,10 @@ function Nav({ items, variant }: { items: NavItem[]; variant: NavVariant }) {
 
 export function Header() {
   const { data: me, isPending } = useMe();
-  const items = nav.filter((n) => n.public || me);
+  const items = [
+    ...nav.filter((n) => n.public || me),
+    ...(me?.role === "admin" ? [{ href: "/admin/disputes", label: "Disputas", public: false }] : []),
+  ];
   const logout = useLogout();
 
   return (

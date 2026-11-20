@@ -232,6 +232,8 @@ type userResponse struct {
 	// A key em si nunca sai da API: só se existe e os 4 últimos caracteres.
 	HasSteamAPIKey   bool    `json:"hasSteamApiKey"`
 	SteamAPIKeyLast4 *string `json:"steamApiKeyLast4"`
+	Role             string  `json:"role"`
+	DebtCents        int64   `json:"debtCents"` // deve à plataforma: não compra até pagar
 }
 
 func toUserResponse(u domain.User) userResponse {
@@ -244,6 +246,8 @@ func toUserResponse(u domain.User) userResponse {
 		TradeURL:         u.TradeURL,
 		HasSteamAPIKey:   u.HasSteamAPIKey,
 		SteamAPIKeyLast4: u.SteamAPIKeyLast4,
+		Role:             u.Role,
+		DebtCents:        u.DebtCents,
 	}
 }
 

@@ -2,12 +2,17 @@
 //
 // O container é criado uma vez por processo de teste (cada pacote roda num
 // processo próprio) e removido automaticamente pelo testcontainers ao final.
-// Os testes ficam isolados criando seus próprios dados (usuários com IDs únicos).
+//
+// Cada teste ganha um BANCO PRÓPRIO, clonado de um template já migrado
+// (CREATE DATABASE ... TEMPLATE leva milissegundos). Criar dados próprios
+// não bastava: os jobs (verificação de trocas, disputas) olham o banco
+// inteiro, e um teste acabava agindo sobre as transações de outro.
 package testdb
 
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -40,12 +45,44 @@ func New(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("start test database: %v", startErr)
 	}
 
-	pool, err := pgxpool.New(context.Background(), dsn)
+	ctx := context.Background()
+	name := fmt.Sprintf("test_%d", dbSeq.Add(1))
+	admin, err := pgxpool.New(ctx, withDB(dsn, "postgres"))
+	if err != nil {
+		t.Fatalf("connect admin: %v", err)
+	}
+	defer admin.Close()
+	// Nomes vêm de um contador, não de entrada externa: seguro no SQL.
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name+" TEMPLATE "+templateDB); err != nil {
+		t.Fatalf("create test database: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, withDB(dsn, name))
 	if err != nil {
 		t.Fatalf("connect test database: %v", err)
 	}
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() {
+		pool.Close()
+		if admin, err := pgxpool.New(ctx, withDB(dsn, "postgres")); err == nil {
+			admin.Exec(ctx, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
+			admin.Close()
+		}
+	})
 	return pool
+}
+
+const templateDB = "viceskins"
+
+var dbSeq atomic.Int64
+
+// withDB troca o banco da connection string.
+func withDB(dsn, db string) string {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		panic(err)
+	}
+	u.Path = "/" + db
+	return u.String()
 }
 
 // NewUser cria um usuário único para o teste e devolve o id.
@@ -68,7 +105,7 @@ func start() {
 	defer cancel()
 
 	c, err := postgres.Run(ctx, "postgres:17-alpine",
-		postgres.WithDatabase("viceskins"),
+		postgres.WithDatabase(templateDB),
 		postgres.WithUsername("test"),
 		postgres.WithPassword("test"),
 		postgres.BasicWaitStrategies(),

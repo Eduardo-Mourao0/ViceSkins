@@ -45,7 +45,8 @@ type PurchaseStore interface {
 	ListTradesToCheck(ctx context.Context, arg repository.ListTradesToCheckParams) ([]int64, error)
 	ListClosedTradesToWatch(ctx context.Context, arg repository.ListClosedTradesToWatchParams) ([]int64, error)
 	MarkTradeChecked(ctx context.Context, arg repository.MarkTradeCheckedParams) error
-	MarkLateDelivery(ctx context.Context, arg repository.MarkLateDeliveryParams) error
+	ListDueDisputes(ctx context.Context, arg repository.ListDueDisputesParams) ([]int64, error)
+	ListDisputes(ctx context.Context, arg repository.ListDisputesParams) ([]repository.ListDisputesRow, error)
 }
 
 type PurchaseConfig struct {
@@ -127,6 +128,10 @@ func (s *PurchaseService) Buy(ctx context.Context, buyerID, listingID int64) (do
 		// Sem trade URL não há para onde mandar a oferta.
 		if buyer.TradeURL == nil {
 			return domain.ErrTradeURLRequired
+		}
+		// Com dívida (cobrança de disputa que o saldo não cobriu), não compra.
+		if buyer.DebtCents > 0 {
+			return domain.ErrBuyerHasDebt
 		}
 		if buyer.BalanceCents < l.PriceCents {
 			return domain.ErrInsufficientBalance
@@ -419,8 +424,20 @@ func (s *PurchaseService) Transition(ctx context.Context, txID int64, to domain.
 			if err := q.SetItemTradable(ctx, repository.SetItemTradableParams{ItemID: cur.ItemID, Tradable: true}); err != nil {
 				return err
 			}
-			_, err := repository.ApplyWalletEntry(ctx, q, cur.SellerID, cur.PriceCents-cur.FeeCents,
-				string(domain.EntrySale), &cur.ID, "Venda: "+item.Name)
+			if _, err := repository.ApplyWalletEntry(ctx, q, cur.SellerID, cur.PriceCents-cur.FeeCents,
+				string(domain.EntrySale), &cur.ID, "Venda: "+item.Name); err != nil {
+				return err
+			}
+			// A taxa vai para a conta da plataforma (por último na ordem de locks).
+			if cur.FeeCents == 0 {
+				return nil
+			}
+			platform, err := q.GetPlatformAccountID(ctx)
+			if err != nil {
+				return fmt.Errorf("platform account: %w", err)
+			}
+			_, err = repository.ApplyWalletEntry(ctx, q, platform, cur.FeeCents,
+				string(domain.EntryFee), &cur.ID, "Taxa: "+item.Name)
 			return err
 
 		case domain.TxCancelled, domain.TxFailed:

@@ -31,6 +31,8 @@ type Config struct {
 	TradeProvider      string
 	TradeCheckInterval time.Duration // cada troca é verificada no máximo nesse intervalo
 	SecretsKey         string        // base64 de 32 bytes: criptografa as API keys dos vendedores
+
+	AdminSteamIDs []string // quem resolve disputas (ADMIN_STEAM_IDS, separados por vírgula)
 }
 
 func Load() (Config, error) {
@@ -75,6 +77,15 @@ func Load() (Config, error) {
 		errs = append(errs, err)
 	}
 
+	for _, id := range strings.Split(os.Getenv("ADMIN_STEAM_IDS"), ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			cfg.AdminSteamIDs = append(cfg.AdminSteamIDs, id)
+			// Contas demo entram sem senha: nunca podem ser admin em produção.
+			if cfg.CookieSecure && strings.HasPrefix(id, "demo-") {
+				errs = append(errs, errors.New("ADMIN_STEAM_IDS must not contain demo accounts with COOKIE_SECURE=true"))
+			}
+		}
+	}
 	cfg.SecretsKey = os.Getenv("SECRETS_KEY")
 	switch cfg.TradeProvider = getenv("TRADE_PROVIDER", "simulated"); cfg.TradeProvider {
 	case "simulated":

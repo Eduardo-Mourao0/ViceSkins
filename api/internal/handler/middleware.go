@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/domain"
 )
 
 type TokenIssuer interface {
@@ -39,4 +41,26 @@ func RequireAuth(tokens TokenIssuer) func(http.Handler) http.Handler {
 func userIDFrom(ctx context.Context) (int64, bool) {
 	id, ok := ctx.Value(ctxKeyUserID{}).(int64)
 	return id, ok
+}
+
+// UserGetter busca o usuário (o papel muda no banco, não no token).
+type UserGetter interface {
+	GetUser(ctx context.Context, id int64) (domain.User, error)
+}
+
+// RequireAdmin vem depois de RequireAuth. O papel é lido do banco a cada
+// requisição, não do JWT: tirar alguém de ADMIN_STEAM_IDS vale na hora,
+// sem esperar o token expirar.
+func RequireAdmin(users UserGetter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			userID, _ := userIDFrom(r.Context())
+			u, err := users.GetUser(r.Context(), userID)
+			if err != nil || !u.IsAdmin() {
+				writeError(w, http.StatusForbidden, "admin only")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }

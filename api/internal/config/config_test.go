@@ -49,3 +49,16 @@ func TestTradeProvider(t *testing.T) {
 		t.Fatal("unknown provider must be refused")
 	}
 }
+
+func TestAdminSteamIDs(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("ADMIN_STEAM_IDS", " 76561198000000001 , demo-1,,")
+	cfg, err := Load()
+	if err != nil || len(cfg.AdminSteamIDs) != 2 || cfg.AdminSteamIDs[1] != "demo-1" {
+		t.Fatalf("%v, %v", cfg.AdminSteamIDs, err)
+	}
+	t.Setenv("COOKIE_SECURE", "true")
+	if _, err := Load(); err == nil {
+		t.Fatal("a demo admin must be refused in production (COOKIE_SECURE=true)")
+	}
+}

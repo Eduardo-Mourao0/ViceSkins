@@ -5,7 +5,7 @@ import { useId, useState } from "react";
 import { RequireLogin } from "@/components/require-login";
 import { Alert, Button, EmptyState, Spinner } from "@/components/ui";
 import { formatDate, formatPrice, parsePriceToCents } from "@/lib/format";
-import { useDeposit, useWallet } from "@/lib/queries";
+import { useDeposit, useMe, useWallet } from "@/lib/queries";
 import type { WalletEntryKind } from "@/lib/types";
 
 const MIN_CENTS = 100;
@@ -17,6 +17,13 @@ const kindLabel: Record<WalletEntryKind, string> = {
   purchase: "Compra",
   sale: "Venda",
   refund: "Estorno",
+  fee: "Taxa da plataforma",
+  dispute_charge: "Cobrança de entrega tardia",
+  dispute_collect: "Cobrança de entrega tardia",
+  dispute_payout: "Pagamento de entrega tardia",
+  dispute_refund: "Cobrança desfeita",
+  debt_payment: "Pagamento de dívida",
+  debt_recovery: "Recuperação de dívida",
 };
 
 export default function WalletPage() {
@@ -25,6 +32,7 @@ export default function WalletPage() {
 
 function WalletView() {
   const { data: wallet, isPending, error } = useWallet(true);
+  const { data: me } = useMe();
 
   return (
     <div className="grid gap-6 lg:grid-cols-[22rem_1fr]">
@@ -49,6 +57,13 @@ function WalletView() {
             </div>
           )}
         </section>
+        {me && me.debtCents > 0 && (
+          <Alert tone="warning">
+            Você deve {formatPrice(me.debtCents)} à plataforma: um item chegou para você depois de a compra ter sido
+            estornada, e o saldo não cobria a nova cobrança. Os próximos depósitos quitam a dívida primeiro, e as compras
+            ficam bloqueadas até lá.
+          </Alert>
+        )}
         <DepositForm />
       </div>
 
