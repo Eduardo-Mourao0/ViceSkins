@@ -7,6 +7,7 @@ package trade
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -19,6 +20,11 @@ const (
 	OfferAccepted OfferState = "accepted" // comprador aceitou: item trocou de dono
 	OfferDeclined OfferState = "declined" // recusada ou expirada
 )
+
+// ErrRejected é uma falha permanente: tentar de novo não adianta (ex.: trade
+// URL inválida, inventário privado). Qualquer outro erro é tratado como
+// temporário, e o envio é refeito com backoff.
+var ErrRejected = errors.New("trade offer rejected")
 
 // Offer é o que precisa ir para a Steam para montar a oferta de troca.
 type Offer struct {
@@ -60,4 +66,11 @@ func (s *Simulated) OfferState(_ context.Context, offerID string) (OfferState, e
 		return OfferAccepted, nil
 	}
 	return OfferPending, nil
+}
+
+func (s *Simulated) CancelOffer(_ context.Context, offerID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sentAt, offerID)
+	return nil
 }

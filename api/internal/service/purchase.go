@@ -16,22 +16,41 @@ import (
 
 // TradeProvider envia e acompanha a oferta de troca na Steam.
 // No MVP a implementação é trade.Simulated.
+//
+// SendOffer pode ser chamado mais de uma vez para a mesma transação (retry
+// depois de um timeout, lease vencido), então precisa ser idempotente por
+// trade.Offer.TransactionID. Erros com trade.ErrRejected são permanentes;
+// os outros são tentados de novo.
 type TradeProvider interface {
 	SendOffer(ctx context.Context, o trade.Offer) (offerID string, err error)
 	OfferState(ctx context.Context, offerID string) (trade.OfferState, error)
+	CancelOffer(ctx context.Context, offerID string) error
 }
 
 type PurchaseStore interface {
 	ExecTx(ctx context.Context, fn func(q *repository.Queries) error) error
 	GetTransaction(ctx context.Context, id int64) (repository.Transaction, error)
+	GetInventoryItem(ctx context.Context, id int64) (repository.InventoryItem, error)
 	ListTransactionIDsByStatus(ctx context.Context, arg repository.ListTransactionIDsByStatusParams) ([]int64, error)
 	ListDueHolds(ctx context.Context, arg repository.ListDueHoldsParams) ([]int64, error)
+	ClaimTradeOutbox(ctx context.Context, arg repository.ClaimTradeOutboxParams) ([]repository.TradeOutbox, error)
+	RescheduleTradeOutbox(ctx context.Context, arg repository.RescheduleTradeOutboxParams) error
+	CloseTradeOutbox(ctx context.Context, arg repository.CloseTradeOutboxParams) error
 }
 
 type PurchaseConfig struct {
-	FeeBps       int64         // taxa da plataforma em basis points (200 = 2%)
-	HoldDuration time.Duration // proteção de troca da Steam (7 dias)
+	FeeBps          int64         // taxa da plataforma em basis points (200 = 2%)
+	HoldDuration    time.Duration // proteção de troca da Steam (7 dias)
+	MaxSendAttempts int           // tentativas de enviar a oferta antes de desistir e estornar
 }
+
+const (
+	defaultMaxSendAttempts = 8                // com o backoff abaixo, ~10 min tentando
+	sendTimeout            = 15 * time.Second // limite de uma chamada ao TradeProvider
+	outboxLease            = time.Minute      // > sendTimeout: o lease não vence no meio do envio
+	retryBase              = 5 * time.Second
+	retryMax               = 5 * time.Minute
+)
 
 type PurchaseService struct {
 	store    PurchaseStore
@@ -41,14 +60,17 @@ type PurchaseService struct {
 }
 
 func NewPurchaseService(store PurchaseStore, provider TradeProvider, cfg PurchaseConfig) *PurchaseService {
+	if cfg.MaxSendAttempts <= 0 {
+		cfg.MaxSendAttempts = defaultMaxSendAttempts
+	}
 	return &PurchaseService{store: store, provider: provider, cfg: cfg, now: time.Now}
 }
 
 // Buy compra uma listing. Tudo que mexe em dinheiro e estoque acontece numa
-// única transação SQL; o envio da oferta de troca vem depois, fora dela.
+// única transação SQL, junto com o pedido de envio da oferta no outbox.
+// O envio em si vem depois, fora dela.
 func (s *PurchaseService) Buy(ctx context.Context, buyerID, listingID int64) (domain.Transaction, error) {
 	var created repository.Transaction
-	var assetID string
 
 	err := s.store.ExecTx(ctx, func(q *repository.Queries) error {
 		// 1. Trava a listing. Ordem fixa dos locks (listing → comprador) evita deadlock.
@@ -82,7 +104,6 @@ func (s *PurchaseService) Buy(ctx context.Context, buyerID, listingID int64) (do
 		if err != nil {
 			return fmt.Errorf("get item: %w", err)
 		}
-		assetID = item.AssetID
 
 		// 3. Listing vendida, transação criada, comprador debitado.
 		n, err := q.MarkListingSold(ctx, l.ID)
@@ -103,42 +124,147 @@ func (s *PurchaseService) Buy(ctx context.Context, buyerID, listingID int64) (do
 		if err != nil {
 			return fmt.Errorf("create transaction: %w", err)
 		}
-		_, err = repository.ApplyWalletEntry(ctx, q, buyerID, -l.PriceCents, string(domain.EntryPurchase),
-			&created.ID, "Compra: "+item.Name)
-		return err
+		if _, err = repository.ApplyWalletEntry(ctx, q, buyerID, -l.PriceCents, string(domain.EntryPurchase),
+			&created.ID, "Compra: "+item.Name); err != nil {
+			return err
+		}
+
+		// 4. Pedido de envio no outbox, no mesmo COMMIT: se a API cair logo
+		// depois, o job de outbox envia a oferta quando ela voltar.
+		return q.EnqueueTradeOffer(ctx, repository.EnqueueTradeOfferParams{TransactionID: created.ID, Now: s.now()})
 	})
 	if err != nil {
 		return domain.Transaction{}, err
 	}
 
-	// 4. Fora da transação SQL: nunca segure locks do banco esperando I/O externo.
-	return s.sendOffer(ctx, created, assetID)
+	// 5. Fora da transação SQL (nunca segure locks do banco esperando I/O
+	// externo): tenta enviar já, para o comprador não esperar o próximo tick.
+	return s.dispatchNow(ctx, created), nil
 }
 
-// sendOffer chama o TradeProvider e avança pending → sent (ou → failed com reembolso).
+// ---- Envio da oferta (outbox) ----
+
+// dispatchNow tenta enviar a oferta da compra que acabou de ser feita.
 //
 // A compra já foi gravada quando chegamos aqui, então nunca devolvemos erro:
-// se algo falhar, o comprador recebe a transação como está (pending) e pode
-// cancelá-la, o que gera o estorno.
-func (s *PurchaseService) sendOffer(ctx context.Context, tx repository.Transaction, assetID string) (domain.Transaction, error) {
-	var next domain.Transaction
-	offerID, err := s.provider.SendOffer(ctx, trade.Offer{
+// se algo falhar, a transação fica pending e o job de outbox tenta de novo.
+func (s *PurchaseService) dispatchNow(ctx context.Context, created repository.Transaction) domain.Transaction {
+	// WithoutCancel: se o cliente fechar a conexão, o envio não é abortado no
+	// meio. O timeout garante que a requisição não fica presa na Steam.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendTimeout)
+	defer cancel()
+
+	claimed, err := s.store.ClaimTradeOutbox(ctx, s.claimParams(&created.ID))
+	if err != nil {
+		slog.Error("claim trade outbox", "tx", created.ID, "err", err)
+		return toDomainTransaction(created)
+	}
+	if len(claimed) == 0 { // o job pegou antes; ele termina o envio
+		return toDomainTransaction(created)
+	}
+	s.dispatch(ctx, claimed[0])
+
+	if tx, err := s.store.GetTransaction(ctx, created.ID); err == nil {
+		return toDomainTransaction(tx)
+	}
+	return toDomainTransaction(created)
+}
+
+// DispatchPendingOffers é o job do outbox: envia as ofertas que ainda não
+// saíram (API caiu depois da compra, Steam fora do ar, retry agendado).
+func (s *PurchaseService) DispatchPendingOffers(ctx context.Context) error {
+	// Uma linha por vez: o lease de cada uma só começa quando ela vai ser
+	// enviada, então nunca vence enquanto espera na fila do próprio worker.
+	for range jobBatchSize {
+		claimed, err := s.store.ClaimTradeOutbox(ctx, s.claimParams(nil))
+		if err != nil {
+			return fmt.Errorf("claim trade outbox: %w", err)
+		}
+		if len(claimed) == 0 {
+			return nil
+		}
+		s.dispatch(ctx, claimed[0])
+	}
+	return nil
+}
+
+func (s *PurchaseService) claimParams(txID *int64) repository.ClaimTradeOutboxParams {
+	now := s.now()
+	return repository.ClaimTradeOutboxParams{
+		Now:           now,
+		LeaseUntil:    now.Add(outboxLease),
+		TransactionID: txID,
+		MaxRows:       1,
+	}
+}
+
+// dispatch envia a oferta de uma linha do outbox já reservada (lease).
+// Sucesso → sent. Erro permanente ou tentativas esgotadas → failed, com
+// estorno. Erro temporário → reagenda com backoff.
+func (s *PurchaseService) dispatch(ctx context.Context, row repository.TradeOutbox) {
+	tx, err := s.store.GetTransaction(ctx, row.TransactionID)
+	if err != nil {
+		slog.Error("dispatch: get transaction", "tx", row.TransactionID, "err", err)
+		return // o lease vence e a linha volta para a fila
+	}
+	if domain.TxStatus(tx.Status) != domain.TxPending {
+		// Já saiu de pending (ex.: comprador cancelou): não há o que enviar.
+		// A Transition fecha a linha; isto só cobre dados antigos.
+		logJobErr("close stale outbox", tx.ID, s.store.CloseTradeOutbox(ctx, repository.CloseTradeOutboxParams{TransactionID: tx.ID, Now: s.now()}))
+		return
+	}
+	item, err := s.store.GetInventoryItem(ctx, tx.ItemID)
+	if err != nil {
+		slog.Error("dispatch: get item", "tx", tx.ID, "err", err)
+		return
+	}
+
+	sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
+	offerID, sendErr := s.provider.SendOffer(sendCtx, trade.Offer{
 		TransactionID: tx.ID,
-		AssetID:       assetID,
+		AssetID:       item.AssetID,
 		SellerID:      tx.SellerID,
 		BuyerID:       tx.BuyerID,
 	})
-	if err != nil {
-		slog.Warn("send trade offer failed", "tx", tx.ID, "err", err)
-		next, err = s.Transition(ctx, tx.ID, domain.TxFailed, Reason("não foi possível enviar a oferta de troca"))
-	} else {
-		next, err = s.Transition(ctx, tx.ID, domain.TxSent, OfferID(offerID))
+	cancel()
+
+	switch {
+	case sendErr == nil:
+		_, err := s.Transition(ctx, tx.ID, domain.TxSent, OfferID(offerID))
+		if errors.Is(err, domain.ErrInvalidTransition) {
+			// O comprador cancelou enquanto a oferta era enviada: ela existe
+			// na Steam, mas a compra não. Desfaz a oferta.
+			slog.Warn("offer sent for a transaction that left pending; cancelling it", "tx", tx.ID)
+			logJobErr("cancel orphan offer", tx.ID, s.provider.CancelOffer(ctx, offerID))
+			return
+		}
+		logJobErr("mark offer sent", tx.ID, err)
+
+	case errors.Is(sendErr, trade.ErrRejected), int(row.Attempts) >= s.cfg.MaxSendAttempts:
+		slog.Warn("giving up on trade offer", "tx", tx.ID, "attempts", row.Attempts, "err", sendErr)
+		_, err := s.Transition(ctx, tx.ID, domain.TxFailed, Reason("não foi possível enviar a oferta de troca"))
+		logJobErr("fail transaction", tx.ID, err)
+
+	default:
+		msg := sendErr.Error()
+		next := s.now().Add(retryDelay(row.Attempts))
+		slog.Warn("send trade offer failed, will retry", "tx", tx.ID, "attempt", row.Attempts, "next", next, "err", sendErr)
+		err := s.store.RescheduleTradeOutbox(ctx, repository.RescheduleTradeOutboxParams{
+			TransactionID: tx.ID, NextAttemptAt: next, LastError: &msg,
+		})
+		logJobErr("reschedule outbox", tx.ID, err)
 	}
-	if err != nil {
-		slog.Error("transition after purchase", "tx", tx.ID, "err", err)
-		return toDomainTransaction(tx), nil
+}
+
+// retryDelay é o backoff exponencial: 5s, 10s, 20s, ... até 5 min.
+func retryDelay(attempt int32) time.Duration {
+	if attempt < 1 {
+		attempt = 1
 	}
-	return next, nil
+	if attempt > 10 { // evita overflow no shift; já passou do teto faz tempo
+		return retryMax
+	}
+	return min(retryBase<<(attempt-1), retryMax)
 }
 
 // ---- Máquina de estados ----
@@ -199,6 +325,14 @@ func (s *PurchaseService) Transition(ctx context.Context, txID int64, to domain.
 		updated, err = q.UpdateTransactionStatus(ctx, params)
 		if err != nil {
 			return fmt.Errorf("update status: %w", err)
+		}
+
+		// Saiu de pending: o pedido de envio no outbox está resolvido (enviado,
+		// cancelado ou falho). Fecha na mesma transação SQL da mudança de status.
+		if from == domain.TxPending {
+			if err := q.CloseTradeOutbox(ctx, repository.CloseTradeOutboxParams{TransactionID: txID, Now: s.now()}); err != nil {
+				return fmt.Errorf("close outbox: %w", err)
+			}
 		}
 
 		item, err := q.GetInventoryItem(ctx, cur.ItemID)
@@ -262,6 +396,13 @@ func (s *PurchaseService) CancelByBuyer(ctx context.Context, buyerID, txID int64
 	}
 	if tx.BuyerID != buyerID {
 		return domain.Transaction{}, domain.ErrNotFound // não revela transações alheias
+	}
+	// Oferta já enviada: cancela na Steam ANTES de estornar. Se cancelar
+	// falhar, o comprador poderia aceitar a troca e ficar com item e dinheiro.
+	if domain.TxStatus(tx.Status) == domain.TxSent && tx.TradeOfferID != nil {
+		if err := s.provider.CancelOffer(ctx, *tx.TradeOfferID); err != nil {
+			return domain.Transaction{}, fmt.Errorf("cancel trade offer: %w", err)
+		}
 	}
 	return s.Transition(ctx, txID, domain.TxCancelled, Reason("cancelada pelo comprador"))
 }

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -19,16 +21,24 @@ import (
 // ---- Ambiente de teste ----
 
 type fakeProvider struct {
-	mu      sync.Mutex
-	sendErr error
-	state   trade.OfferState
+	mu        sync.Mutex
+	sendErr   error
+	cancelErr error
+	delay     time.Duration // latência simulada da Steam em SendOffer
+	state     trade.OfferState
+	sends     int      // chamadas a SendOffer, com sucesso ou não
+	cancelled []string // ofertas canceladas
 }
 
 func (p *fakeProvider) SendOffer(_ context.Context, o trade.Offer) (string, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.sendErr != nil {
-		return "", p.sendErr
+	p.sends++
+	delay, sendErr := p.delay, p.sendErr
+	p.mu.Unlock()
+
+	time.Sleep(delay) // fora do mutex: chamadas concorrentes se sobrepõem, como na Steam
+	if sendErr != nil {
+		return "", sendErr
 	}
 	return fmt.Sprintf("fake-%d", o.TransactionID), nil
 }
@@ -37,6 +47,29 @@ func (p *fakeProvider) OfferState(context.Context, string) (trade.OfferState, er
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.state, nil
+}
+
+func (p *fakeProvider) CancelOffer(_ context.Context, offerID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.cancelErr != nil {
+		return p.cancelErr
+	}
+	p.cancelled = append(p.cancelled, offerID)
+	return nil
+}
+
+// set altera o fake sob o mutex (os jobs podem estar lendo em outra goroutine).
+func (p *fakeProvider) set(fn func(p *fakeProvider)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	fn(p)
+}
+
+func (p *fakeProvider) sendCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.sends
 }
 
 type env struct {
@@ -48,14 +81,19 @@ type env struct {
 	svc      *service.PurchaseService
 }
 
-const feeBps = 200 // 2%
+const (
+	feeBps          = 200 // 2%
+	maxSendAttempts = 3
+)
 
 func setup(t *testing.T) *env {
 	pool := testdb.New(t)
 	store := repository.NewStore(pool)
 	provider := &fakeProvider{state: trade.OfferAccepted}
 	// HoldDuration 0: a proteção "acaba" na hora, para testar o fluxo inteiro.
-	svc := service.NewPurchaseService(store, provider, service.PurchaseConfig{FeeBps: feeBps, HoldDuration: 0})
+	svc := service.NewPurchaseService(store, provider, service.PurchaseConfig{
+		FeeBps: feeBps, HoldDuration: 0, MaxSendAttempts: maxSendAttempts,
+	})
 	return &env{t: t, ctx: context.Background(), pool: pool, store: store, provider: provider, svc: svc}
 }
 
@@ -118,6 +156,32 @@ func (e *env) scalar(query string, args ...any) (v int64) {
 		e.t.Fatal(err)
 	}
 	return v
+}
+
+// retryDue faz o retry agendado no outbox vencer agora (sem esperar o backoff).
+func (e *env) retryDue(txID int64) {
+	e.t.Helper()
+	_, err := e.pool.Exec(e.ctx,
+		`UPDATE trade_outbox SET next_attempt_at = $2 WHERE transaction_id = $1`, txID, time.Now().Add(-time.Second))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) status(txID int64) domain.TxStatus {
+	e.t.Helper()
+	tx, err := e.store.GetTransaction(e.ctx, txID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return domain.TxStatus(tx.Status)
+}
+
+func (e *env) dispatch() {
+	e.t.Helper()
+	if err := e.svc.DispatchPendingOffers(e.ctx); err != nil {
+		e.t.Fatal(err)
+	}
 }
 
 func (e *env) listingStatus(id int64) (s string) {
@@ -366,9 +430,174 @@ func TestBuyRejections(t *testing.T) {
 
 // ---- Falhas e estornos ----
 
-func TestProviderFailureRefundsBuyer(t *testing.T) {
+// ---- Outbox: envio da oferta com retry ----
+
+func TestTransientSendErrorIsRetried(t *testing.T) {
 	e := setup(t)
-	e.provider.sendErr = errors.New("steam is down")
+	e.provider.set(func(p *fakeProvider) { p.sendErr = errors.New("steam is down") })
+	seller, buyer := e.user(0), e.user(10_000)
+	listingID, _ := e.listing(seller, 5_000)
+
+	tx, err := e.svc.Buy(e.ctx, buyer, listingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Falha temporária: a compra continua de pé, esperando o retry.
+	if tx.Status != domain.TxPending || e.balance(buyer) != 5_000 {
+		t.Fatalf("status %s, buyer %d; want pending and charged", tx.Status, e.balance(buyer))
+	}
+	if errMsg := e.scalar(`SELECT count(*) FROM trade_outbox WHERE transaction_id = $1 AND last_error IS NOT NULL AND done_at IS NULL`, tx.ID); errMsg != 1 {
+		t.Fatal("outbox must keep the row open with the last error")
+	}
+
+	// Antes do backoff vencer, o job não tenta de novo.
+	e.dispatch()
+	if e.provider.sendCount() != 1 {
+		t.Fatalf("sends = %d, want 1 (retry is not due yet)", e.provider.sendCount())
+	}
+
+	// A Steam volta e o retry vence: a oferta sai.
+	e.provider.set(func(p *fakeProvider) { p.sendErr = nil })
+	e.retryDue(tx.ID)
+	e.dispatch()
+	if s := e.status(tx.ID); s != domain.TxSent {
+		t.Fatalf("status = %s, want sent", s)
+	}
+	if open := e.scalar(`SELECT count(*) FROM trade_outbox WHERE done_at IS NULL`); open != 0 {
+		t.Fatalf("%d outbox rows still open after send", open)
+	}
+	e.assertLedger(buyer, seller)
+}
+
+func TestSendGivesUpAfterMaxAttempts(t *testing.T) {
+	e := setup(t)
+	e.provider.set(func(p *fakeProvider) { p.sendErr = errors.New("steam is down") })
+	seller, buyer := e.user(0), e.user(10_000)
+	listingID, _ := e.listing(seller, 5_000)
+
+	tx, _ := e.svc.Buy(e.ctx, buyer, listingID) // tentativa 1
+	for range maxSendAttempts - 1 {             // tentativas 2..max
+		e.retryDue(tx.ID)
+		e.dispatch()
+	}
+	if e.provider.sendCount() != maxSendAttempts {
+		t.Fatalf("sends = %d, want %d", e.provider.sendCount(), maxSendAttempts)
+	}
+	got, _ := e.svc.GetForUser(e.ctx, buyer, tx.ID)
+	if got.Status != domain.TxFailed || got.FailureReason == nil {
+		t.Fatalf("tx = %+v, want failed with reason", got)
+	}
+	if e.balance(buyer) != 10_000 {
+		t.Fatalf("buyer not refunded: %d", e.balance(buyer))
+	}
+	// Desistiu de vez: nenhum envio a mais.
+	e.retryDue(tx.ID)
+	e.dispatch()
+	if e.provider.sendCount() != maxSendAttempts {
+		t.Fatal("job kept sending after giving up")
+	}
+	e.assertLedger(buyer, seller)
+}
+
+// Simula a API morrendo no meio do envio: a linha fica reservada (lease) e
+// ninguém conclui. Quando o lease vence, o job retoma sozinho.
+func TestExpiredLeaseIsPickedUpAgain(t *testing.T) {
+	e := setup(t)
+	seller, buyer := e.user(0), e.user(10_000)
+	listingID, _ := e.listing(seller, 5_000)
+
+	// O 1º envio falha; depois um "worker" reserva a linha e morre sem concluir.
+	e.provider.set(func(p *fakeProvider) { p.sendErr = errors.New("crash") })
+	tx, _ := e.svc.Buy(e.ctx, buyer, listingID)
+	e.provider.set(func(p *fakeProvider) { p.sendErr = nil })
+	_, err := e.pool.Exec(e.ctx, `UPDATE trade_outbox
+		SET next_attempt_at = $2, locked_until = $3
+		WHERE transaction_id = $1`, tx.ID, time.Now().Add(-time.Second), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e.dispatch()
+	if e.status(tx.ID) != domain.TxPending {
+		t.Fatal("job must not touch a row with a valid lease")
+	}
+
+	if _, err := e.pool.Exec(e.ctx, `UPDATE trade_outbox SET locked_until = $2 WHERE transaction_id = $1`, tx.ID, time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	e.dispatch()
+	if s := e.status(tx.ID); s != domain.TxSent {
+		t.Fatalf("status = %s, want sent after lease expired", s)
+	}
+}
+
+// 10 workers rodando o job ao mesmo tempo na mesma fila: a oferta sai uma vez.
+func TestConcurrentDispatchSendsOnce(t *testing.T) {
+	e := setup(t)
+	seller, buyer := e.user(0), e.user(10_000)
+	listingID, _ := e.listing(seller, 5_000)
+
+	e.provider.set(func(p *fakeProvider) { p.sendErr = errors.New("steam is down") })
+	tx, _ := e.svc.Buy(e.ctx, buyer, listingID)
+	// Latência realista: abre a janela em que outro worker poderia pegar a
+	// mesma linha se o lease não fosse respeitado.
+	e.provider.set(func(p *fakeProvider) { p.sendErr, p.delay = nil, 200*time.Millisecond })
+	e.retryDue(tx.ID)
+
+	const workers = 10
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			// Cada worker roda várias vezes durante o envio, como um ticker.
+			for range 5 {
+				if err := e.svc.DispatchPendingOffers(e.ctx); err != nil {
+					t.Error(err)
+				}
+				time.Sleep(30 * time.Millisecond)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if n := e.provider.sendCount(); n != 2 { // 1 falha no Buy + 1 envio
+		t.Fatalf("SendOffer called %d times, want 2", n)
+	}
+	if e.status(tx.ID) != domain.TxSent {
+		t.Fatalf("status = %s, want sent", e.status(tx.ID))
+	}
+}
+
+func TestBuyerCancelWhilePendingNeverSends(t *testing.T) {
+	e := setup(t)
+	seller, buyer := e.user(0), e.user(10_000)
+	listingID, _ := e.listing(seller, 5_000)
+
+	e.provider.set(func(p *fakeProvider) { p.sendErr = errors.New("steam is down") })
+	tx, _ := e.svc.Buy(e.ctx, buyer, listingID)
+	if _, err := e.svc.CancelByBuyer(e.ctx, buyer, tx.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	e.provider.set(func(p *fakeProvider) { p.sendErr = nil })
+	e.retryDue(tx.ID)
+	e.dispatch()
+	if n := e.provider.sendCount(); n != 1 {
+		t.Fatalf("SendOffer called %d times, want 1 (no send after cancel)", n)
+	}
+	if e.balance(buyer) != 10_000 {
+		t.Fatalf("buyer not refunded: %d", e.balance(buyer))
+	}
+	e.assertLedger(buyer, seller)
+}
+
+func TestRejectedOfferFailsImmediately(t *testing.T) {
+	e := setup(t)
+	e.provider.set(func(p *fakeProvider) { p.sendErr = fmt.Errorf("invalid trade url: %w", trade.ErrRejected) })
 	seller, buyer := e.user(0), e.user(10_000)
 	listingID, _ := e.listing(seller, 5_000)
 
@@ -459,6 +688,25 @@ func TestCancelByBuyer(t *testing.T) {
 		}
 		if e.balance(buyer) != 10_000 {
 			t.Fatalf("buyer not refunded: %d", e.balance(buyer))
+		}
+		if !slices.Contains(e.provider.cancelled, *tx.TradeOfferID) {
+			t.Fatal("trade offer must be cancelled on Steam")
+		}
+	})
+
+	t.Run("no refund if the offer cannot be cancelled", func(t *testing.T) {
+		listingID, _ := e.listing(seller, 5_000)
+		tx, _ := e.svc.Buy(e.ctx, buyer, listingID)
+		before := e.balance(buyer)
+
+		e.provider.set(func(p *fakeProvider) { p.cancelErr = errors.New("steam is down") })
+		defer e.provider.set(func(p *fakeProvider) { p.cancelErr = nil })
+
+		if _, err := e.svc.CancelByBuyer(e.ctx, buyer, tx.ID); err == nil {
+			t.Fatal("cancel must fail when the offer cannot be cancelled")
+		}
+		if e.status(tx.ID) != domain.TxSent || e.balance(buyer) != before {
+			t.Fatal("failed cancel must not change status or refund")
 		}
 	})
 

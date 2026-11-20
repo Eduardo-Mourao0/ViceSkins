@@ -42,6 +42,16 @@ type Listing struct {
 	UpdatedAt  time.Time
 }
 
+type TradeOutbox struct {
+	TransactionID int64
+	Attempts      int32
+	NextAttemptAt time.Time
+	LockedUntil   *time.Time
+	LastError     *string
+	CreatedAt     time.Time
+	DoneAt        *time.Time
+}
+
 type Transaction struct {
 	ID            int64
 	ListingID     int64

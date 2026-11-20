@@ -106,6 +106,11 @@ stateDiagram-v2
   - `CHECK (balance_cents >= 0)`;
   - `CHECK (buyer_id <> seller_id)`.
 - A chamada à Steam fica **fora** da transação SQL: nunca se segura lock do banco esperando I/O externo.
+- **Outbox transacional** para o envio da oferta:
+  - o pedido de envio é gravado no mesmo `COMMIT` da compra, então a API cair logo depois não perde a entrega;
+  - um job reserva cada linha com `FOR UPDATE SKIP LOCKED` e um *lease* com prazo. Dois workers nunca enviam a mesma oferta, e se um morrer no meio, outro retoma quando o lease vence;
+  - falhas temporárias são tentadas de novo com backoff exponencial. Falhas permanentes, ou tentativas esgotadas, viram `failed` com estorno.
+- Cancelar uma compra com a oferta já enviada **cancela a oferta antes de estornar**: se o cancelamento falhar, nada é devolvido. Assim o comprador não fica com o item e o dinheiro ao mesmo tempo.
 
 **Estados**
 - A máquina de estados é um mapa único no domínio.
@@ -178,6 +183,7 @@ Os testes de integração rodam contra **PostgreSQL real** (testcontainers) e co
 - 15 rodadas de **20 compradores simultâneos** na mesma listing → sempre exatamente 1 vence, e os outros não são cobrados
 - o mesmo comprador fazendo compras simultâneas além do saldo → só as que cabem passam
 - **10 workers concluindo a mesma transação** → o vendedor é pago uma única vez
+- **10 workers despachando o outbox** ao mesmo tempo → a oferta sai uma vez só; lease vencido é retomado; retry com backoff e desistência com estorno
 - 50 depósitos simultâneos → nenhuma atualização de saldo perdida
 - o ciclo completo, estornos, reversão durante a proteção e transições inválidas
 - todos os pares (de → para) da máquina de estados

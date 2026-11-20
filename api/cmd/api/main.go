@@ -80,6 +80,7 @@ func run() error {
 		stopJobs()
 		jobsWG.Wait()
 	}()
+	jobs.Every(jobsCtx, &jobsWG, "trade-outbox", 3*time.Second, purchaseSvc.DispatchPendingOffers)
 	jobs.Every(jobsCtx, &jobsWG, "trade-offers", 5*time.Second, purchaseSvc.ProcessSentOffers)
 	jobs.Every(jobsCtx, &jobsWG, "hold-release", 30*time.Second, purchaseSvc.ReleaseDueHolds)
 
