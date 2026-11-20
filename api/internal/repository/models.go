@@ -42,6 +42,22 @@ type Listing struct {
 	UpdatedAt  time.Time
 }
 
+type Transaction struct {
+	ID            int64
+	ListingID     int64
+	BuyerID       int64
+	SellerID      int64
+	ItemID        int64
+	PriceCents    int64
+	FeeCents      int64
+	Status        string
+	TradeOfferID  *string
+	HoldUntil     *time.Time
+	FailureReason *string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
 type User struct {
 	ID                 int64
 	SteamID            string

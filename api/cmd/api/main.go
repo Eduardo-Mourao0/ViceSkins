@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -16,9 +17,11 @@ import (
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/auth"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/config"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/handler"
+	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/jobs"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/repository"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/service"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/steam"
+	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/trade"
 )
 
 func main() {
@@ -61,15 +64,31 @@ func run() error {
 	authSvc := service.NewAuthService(store, steamClient)
 	inventorySvc := service.NewInventoryService(store, steamClient, 5*time.Minute)
 	listingSvc := service.NewListingService(store)
+	purchaseSvc := service.NewPurchaseService(store, trade.NewSimulated(cfg.SimAcceptAfter), service.PurchaseConfig{
+		FeeBps:       cfg.PlatformFeeBps,
+		HoldDuration: cfg.TradeHoldDuration,
+	})
+
+	// Jobs em background. Ao sair de run(), os defers rodam em ordem inversa:
+	// primeiro param os jobs e esperamos a rodada atual, depois fecha o pool.
+	jobsCtx, stopJobs := context.WithCancel(ctx)
+	var jobsWG sync.WaitGroup
+	defer func() {
+		stopJobs()
+		jobsWG.Wait()
+	}()
+	jobs.Every(jobsCtx, &jobsWG, "trade-offers", 5*time.Second, purchaseSvc.ProcessSentOffers)
+	jobs.Every(jobsCtx, &jobsWG, "hold-release", 30*time.Second, purchaseSvc.ReleaseDueHolds)
 
 	router := handler.NewRouter(handler.Deps{
-		DB:        pool,
-		Auth:      handler.NewAuthHandler(authSvc, tokens, cfg.CookieSecure, cfg.AuthRedirectURL),
-		Inventory: handler.NewInventoryHandler(inventorySvc),
-		Listings:  handler.NewListingHandler(listingSvc),
-		Market:    handler.NewMarketHandler(service.NewMarketService(store)),
-		Wallet:    handler.NewWalletHandler(service.NewWalletService(store)),
-		Tokens:    tokens,
+		DB:           pool,
+		Auth:         handler.NewAuthHandler(authSvc, tokens, cfg.CookieSecure, cfg.AuthRedirectURL),
+		Inventory:    handler.NewInventoryHandler(inventorySvc),
+		Listings:     handler.NewListingHandler(listingSvc),
+		Market:       handler.NewMarketHandler(service.NewMarketService(store)),
+		Wallet:       handler.NewWalletHandler(service.NewWalletService(store)),
+		Transactions: handler.NewTransactionHandler(purchaseSvc),
+		Tokens:       tokens,
 	})
 
 	srv := &http.Server{

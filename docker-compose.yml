@@ -37,6 +37,10 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-0123456789abcdef}
       STEAM_API_KEY: ${STEAM_API_KEY:-}
       COOKIE_SECURE: "false"
+      PLATFORM_FEE_BPS: ${PLATFORM_FEE_BPS:-200}
+      # Proteção de troca da Steam é 7 dias (168h). Em dev, coloque algo como 2m no .env.
+      TRADE_HOLD_DURATION: ${TRADE_HOLD_DURATION:-168h}
+      SIM_TRADE_ACCEPT_AFTER: ${SIM_TRADE_ACCEPT_AFTER:-15s}
     ports:
       - "8080:8080"
     depends_on:

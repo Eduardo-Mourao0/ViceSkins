@@ -16,4 +16,8 @@ var (
 	ErrItemNotTradable   = errors.New("item is not tradable")
 	ErrItemAlreadyListed = errors.New("item already has an active listing")
 	ErrListingNotActive  = errors.New("listing is not active")
+
+	ErrInsufficientBalance = errors.New("insufficient balance")
+	ErrCannotBuyOwnListing = errors.New("cannot buy your own listing")
+	ErrInvalidTransition   = errors.New("invalid transaction status transition")
 )

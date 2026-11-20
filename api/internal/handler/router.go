@@ -8,13 +8,14 @@ import (
 )
 
 type Deps struct {
-	DB        Pinger
-	Auth      *AuthHandler
-	Inventory *InventoryHandler
-	Listings  *ListingHandler
-	Market    *MarketHandler
-	Wallet    *WalletHandler
-	Tokens    TokenIssuer
+	DB           Pinger
+	Auth         *AuthHandler
+	Inventory    *InventoryHandler
+	Listings     *ListingHandler
+	Market       *MarketHandler
+	Wallet       *WalletHandler
+	Transactions *TransactionHandler
+	Tokens       TokenIssuer
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -49,6 +50,10 @@ func NewRouter(d Deps) http.Handler {
 
 		r.Get("/me/wallet", d.Wallet.Get)
 		r.Post("/wallet/deposits", d.Wallet.Deposit)
+
+		r.Post("/listings/{id}/buy", d.Transactions.Buy)
+		r.Get("/transactions/{id}", d.Transactions.Get)
+		r.Post("/transactions/{id}/cancel", d.Transactions.Cancel)
 	})
 
 	return r

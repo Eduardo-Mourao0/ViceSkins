@@ -30,8 +30,8 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{Queries: New(pool), pool: pool}
 }
 
-// execTx roda fn dentro de uma transação. Se fn retornar erro, faz rollback.
-func (s *Store) execTx(ctx context.Context, fn func(q *Queries) error) error {
+// ExecTx roda fn dentro de uma transação. Se fn retornar erro, faz rollback.
+func (s *Store) ExecTx(ctx context.Context, fn func(q *Queries) error) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -49,18 +49,18 @@ func (s *Store) execTx(ctx context.Context, fn func(q *Queries) error) error {
 // Deposit credita amount no saldo do usuário e registra no ledger, atomicamente.
 func (s *Store) Deposit(ctx context.Context, userID, amountCents int64, description string) (WalletEntry, error) {
 	var entry WalletEntry
-	err := s.execTx(ctx, func(q *Queries) error {
+	err := s.ExecTx(ctx, func(q *Queries) error {
 		var err error
-		entry, err = applyWalletEntry(ctx, q, userID, amountCents, "deposit", nil, description)
+		entry, err = ApplyWalletEntry(ctx, q, userID, amountCents, "deposit", nil, description)
 		return err
 	})
 	return entry, err
 }
 
-// applyWalletEntry é a ÚNICA forma de mexer no saldo: altera users.balance_cents
+// ApplyWalletEntry é a ÚNICA forma de mexer no saldo: altera users.balance_cents
 // e grava a linha do ledger com o saldo resultante. Precisa rodar dentro de uma
-// transação (q vem de execTx), senão as duas escritas podem se separar.
-func applyWalletEntry(ctx context.Context, q *Queries, userID, amountCents int64, kind string, txID *int64, description string) (WalletEntry, error) {
+// transação (q vem de ExecTx), senão as duas escritas podem se separar.
+func ApplyWalletEntry(ctx context.Context, q *Queries, userID, amountCents int64, kind string, txID *int64, description string) (WalletEntry, error) {
 	balance, err := q.AddToBalance(ctx, AddToBalanceParams{UserID: userID, AmountCents: amountCents})
 	if err != nil {
 		return WalletEntry{}, fmt.Errorf("update balance: %w", err)
@@ -82,7 +82,7 @@ func applyWalletEntry(ctx context.Context, q *Queries, userID, amountCents int64
 // SyncInventory substitui o inventário em cache do usuário pelo que veio da Steam,
 // tudo numa transação: ou atualiza tudo, ou nada.
 func (s *Store) SyncInventory(ctx context.Context, ownerID int64, items []UpsertInventoryItemParams) error {
-	return s.execTx(ctx, func(q *Queries) error {
+	return s.ExecTx(ctx, func(q *Queries) error {
 		// Precisa ser slice vazio e não nil: nil vira NULL no Postgres,
 		// e "asset_id = ANY(NULL)" não remove nada.
 		present := make([]string, 0, len(items))

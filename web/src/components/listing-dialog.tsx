@@ -1,27 +1,25 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useRef } from "react";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+import { isApiError } from "@/lib/api";
 import { formatDate, formatFloat, formatPrice } from "@/lib/format";
+import { useBuy, useCancelTransaction, useMe, useTransaction } from "@/lib/queries";
 import type { MarketListing } from "@/lib/types";
 import { FloatBar } from "./float-bar";
-import { Button } from "./ui";
+import { TxProgress, TxStatusBadge, txStatusInfo } from "./tx-status";
+import { Alert, Button, SteamLoginButton } from "./ui";
 
-/** Detalhe de um anúncio do mercado. A compra entra na etapa 6. */
-export function ListingDialog({
-  listing,
-  isMine,
-  onClose,
-}: {
-  listing: MarketListing;
-  isMine: boolean;
-  onClose: () => void;
-}) {
+/** Detalhe de um anúncio do mercado, com o fluxo de compra. */
+export function ListingDialog({ listing, onClose }: { listing: MarketListing; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     ref.current?.showModal();
   }, []);
 
+  const { data: me } = useMe();
+  const isMine = me?.id === listing.seller.id;
   const { item, seller } = listing;
   const color = `#${item.rarityColor || "6f6290"}`;
 
@@ -88,18 +86,123 @@ export function ListingDialog({
           <p className="ml-auto text-xs text-faint">Anunciado em {formatDate(listing.createdAt)}</p>
         </div>
 
-        <div className="flex items-center justify-between gap-4 border-t border-line pt-5">
-          <p className="text-2xl font-bold text-neon-pink tabular-nums">{formatPrice(listing.priceCents)}</p>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={onClose}>
-              Fechar
-            </Button>
-            <Button disabled title={isMine ? "Este anúncio é seu" : "Compra em breve"}>
-              {isMine ? "Seu anúncio" : "Comprar"}
-            </Button>
-          </div>
+        <div className="border-t border-line pt-5">
+          {!me ? (
+            <div className="flex items-center justify-between gap-4">
+              <Price cents={listing.priceCents} />
+              <SteamLoginButton />
+            </div>
+          ) : isMine ? (
+            <div className="flex items-center justify-between gap-4">
+              <Price cents={listing.priceCents} />
+              <Button disabled>Seu anúncio</Button>
+            </div>
+          ) : (
+            <BuyFlow listing={listing} balanceCents={me.balanceCents} onClose={onClose} />
+          )}
         </div>
       </div>
     </dialog>
+  );
+}
+
+function Price({ cents }: { cents: number }) {
+  return <p className="text-2xl font-bold text-neon-pink tabular-nums">{formatPrice(cents)}</p>;
+}
+
+/** Comprar → confirmar → acompanhar a transação ao vivo. */
+function BuyFlow({
+  listing,
+  balanceCents,
+  onClose,
+}: {
+  listing: MarketListing;
+  balanceCents: number;
+  onClose: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const buy = useBuy();
+  const cancel = useCancelTransaction();
+  const { data: tx } = useTransaction(buy.data?.id ?? null);
+
+  // Depois da compra: linha do tempo da transação.
+  if (tx) {
+    const info = txStatusInfo[tx.status];
+    const canCancel = tx.status === "pending" || tx.status === "sent";
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <p className="font-semibold">Compra #{tx.id}</p>
+          <TxStatusBadge status={tx.status} />
+        </div>
+        <TxProgress status={tx.status} />
+        <p className="text-sm text-muted">{tx.failureReason ? `${info.hint} (${tx.failureReason})` : info.hint}</p>
+        {cancel.error && <Alert>{cancel.error.message}</Alert>}
+        <div className="flex justify-end gap-2">
+          {canCancel && (
+            <Button variant="danger" onClick={() => cancel.mutate(tx.id)} loading={cancel.isPending}>
+              Cancelar compra
+            </Button>
+          )}
+          <Button variant="ghost" onClick={onClose}>
+            Fechar
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const insufficient = balanceCents < listing.priceCents;
+  const after = balanceCents - listing.priceCents;
+  const errorMessage =
+    buy.error &&
+    (isApiError(buy.error, 409)
+      ? "Este item acabou de ser vendido para outra pessoa."
+      : isApiError(buy.error, 422) && buy.error.message === "insufficient balance"
+        ? "Saldo insuficiente."
+        : buy.error.message);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-4">
+        <Price cents={listing.priceCents} />
+        {!confirming && (
+          <Button onClick={() => setConfirming(true)} disabled={insufficient}>
+            Comprar
+          </Button>
+        )}
+      </div>
+
+      {insufficient && (
+        <Alert tone="warning">
+          Seu saldo é {formatPrice(balanceCents)}.{" "}
+          <Link href="/wallet" className="underline underline-offset-2">
+            Depositar
+          </Link>
+        </Alert>
+      )}
+
+      {confirming && (
+        <div className="flex flex-col gap-3 rounded-lg border border-pink/40 bg-pink/5 p-4">
+          <dl className="grid grid-cols-2 gap-y-1 text-sm">
+            <dt className="text-muted">Saldo atual</dt>
+            <dd className="text-right tabular-nums">{formatPrice(balanceCents)}</dd>
+            <dt className="text-muted">Preço</dt>
+            <dd className="text-right tabular-nums">− {formatPrice(listing.priceCents)}</dd>
+            <dt className="font-semibold">Saldo após a compra</dt>
+            <dd className="text-right font-semibold tabular-nums">{formatPrice(after)}</dd>
+          </dl>
+          {errorMessage && <Alert>{errorMessage}</Alert>}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setConfirming(false)} disabled={buy.isPending}>
+              Voltar
+            </Button>
+            <Button onClick={() => buy.mutate(listing.id)} loading={buy.isPending} disabled={buy.isError}>
+              Confirmar compra
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

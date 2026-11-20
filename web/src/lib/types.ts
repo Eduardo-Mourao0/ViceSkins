@@ -40,6 +40,26 @@ export type Inventory = {
 
 export type ListingStatus = "active" | "sold" | "cancelled";
 
+export type TxStatus = "pending" | "sent" | "on_hold" | "completed" | "cancelled" | "failed";
+
+export type Transaction = {
+  id: number;
+  listingId: number;
+  itemId: number;
+  buyerId: number;
+  sellerId: number;
+  role: "buyer" | "seller";
+  priceCents: number;
+  feeCents: number;
+  sellerReceivesCents: number;
+  status: TxStatus;
+  tradeOfferId: string | null;
+  holdUntil: string | null;
+  failureReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type WalletEntryKind = "deposit" | "purchase" | "sale" | "refund";
 
 export type WalletEntry = {

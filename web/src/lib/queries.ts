@@ -8,6 +8,8 @@ import type {
   ListingStatus,
   MarketListing,
   MarketPage,
+  Transaction,
+  TxStatus,
   User,
   Wallet,
   WalletEntry,
@@ -20,7 +22,54 @@ export const keys = {
   market: (query: string) => ["market", query] as const,
   listing: (id: number) => ["listing", id] as const,
   wallet: ["wallet"] as const,
+  transaction: (id: number) => ["transaction", id] as const,
 };
+
+const FINAL: TxStatus[] = ["completed", "cancelled", "failed"];
+
+/** Acompanha uma transação; consulta a cada 3s enquanto ela ainda pode mudar de status. */
+export function useTransaction(id: number | null) {
+  return useQuery({
+    queryKey: keys.transaction(id ?? 0),
+    queryFn: () => api<Transaction>(`/transactions/${id}`),
+    enabled: id !== null,
+    refetchInterval: (q) => (q.state.data && FINAL.includes(q.state.data.status) ? false : 3_000),
+  });
+}
+
+/** Tudo que muda quando dinheiro ou itens mudam de mãos. */
+function useInvalidateMoneyViews() {
+  const qc = useQueryClient();
+  return () => {
+    for (const key of [keys.me, keys.wallet, keys.inventory, ["market"], ["listing"], ["my-listings"]]) {
+      qc.invalidateQueries({ queryKey: key });
+    }
+  };
+}
+
+export function useBuy() {
+  const qc = useQueryClient();
+  const invalidate = useInvalidateMoneyViews();
+  return useMutation({
+    mutationFn: (listingId: number) => api<Transaction>(`/listings/${listingId}/buy`, { method: "POST" }),
+    onSuccess: (tx) => {
+      qc.setQueryData(keys.transaction(tx.id), tx);
+      invalidate();
+    },
+  });
+}
+
+export function useCancelTransaction() {
+  const qc = useQueryClient();
+  const invalidate = useInvalidateMoneyViews();
+  return useMutation({
+    mutationFn: (txId: number) => api<Transaction>(`/transactions/${txId}/cancel`, { method: "POST" }),
+    onSuccess: (tx) => {
+      qc.setQueryData(keys.transaction(tx.id), tx);
+      invalidate();
+    },
+  });
+}
 
 export function useWallet(enabled: boolean) {
   return useQuery({

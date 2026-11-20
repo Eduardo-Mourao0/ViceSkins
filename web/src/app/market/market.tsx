@@ -118,7 +118,6 @@ export function Market() {
         <ListingDialog
           key={selected.id}
           listing={selected}
-          isMine={me?.id === selected.seller.id}
           onClose={() => setSelected(null)}
         />
       )}
