@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useMe } from "@/lib/queries";
 import type { User } from "@/lib/types";
+import { DemoLoginButton } from "./demo-login";
 import { EmptyState, Spinner, SteamLoginButton } from "./ui";
 
 /** Renderiza children só com usuário logado; senão mostra o convite para login. */
@@ -21,7 +22,15 @@ export function RequireLogin({ children }: { children: (me: User) => ReactNode }
   }
   if (!me) {
     return (
-      <EmptyState title="Entre para continuar" action={<SteamLoginButton />}>
+      <EmptyState
+        title="Entre para continuar"
+        action={
+          <div className="flex flex-wrap justify-center gap-2">
+            <SteamLoginButton />
+            <DemoLoginButton align="left" />
+          </div>
+        }
+      >
         O login é feito pela própria Steam. Nunca vemos sua senha.
       </EmptyState>
     );

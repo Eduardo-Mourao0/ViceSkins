@@ -27,6 +27,19 @@ services:
       postgres:
         condition: service_healthy
 
+  # Dados de demonstração. Não roda no "up": use "docker compose run --rm seed".
+  seed:
+    image: postgres:17-alpine
+    profiles: ["seed"]
+    volumes:
+      - ./api/db/seed:/seed:ro
+    environment:
+      PGPASSWORD: viceskins
+    command: ["psql", "-h", "postgres", "-U", "viceskins", "-d", "viceskins", "-v", "ON_ERROR_STOP=1", "-f", "/seed/dev_seed.sql"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   api:
     build: ./api
     environment:
@@ -37,6 +50,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-0123456789abcdef}
       STEAM_API_KEY: ${STEAM_API_KEY:-}
       COOKIE_SECURE: "false"
+      # Login sem Steam nas contas demo da seed. Só para desenvolvimento.
+      DEV_LOGIN: ${DEV_LOGIN:-true}
       PLATFORM_FEE_BPS: ${PLATFORM_FEE_BPS:-200}
       # Proteção de troca da Steam é 7 dias (168h). Em dev, coloque algo como 2m no .env.
       TRADE_HOLD_DURATION: ${TRADE_HOLD_DURATION:-168h}

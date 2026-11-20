@@ -22,6 +22,8 @@ type AuthService interface {
 	LoginURL(state string) string
 	LoginWithSteam(ctx context.Context, q url.Values) (domain.User, error)
 	GetUser(ctx context.Context, id int64) (domain.User, error)
+	DemoUsers(ctx context.Context) ([]domain.User, error)
+	DemoLogin(ctx context.Context, userID int64) (domain.User, error)
 }
 
 type AuthHandler struct {
@@ -77,11 +79,20 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.tokens.Issue(user.ID)
+	if !h.startSession(w, user.ID) {
+		return
+	}
+	http.Redirect(w, r, h.redirectURL, http.StatusFound)
+}
+
+// startSession emite o JWT e grava o cookie de sessão. Em caso de erro, já
+// responde 500 e devolve false.
+func (h *AuthHandler) startSession(w http.ResponseWriter, userID int64) bool {
+	token, err := h.tokens.Issue(userID)
 	if err != nil {
 		slog.Error("issue token", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
-		return
+		return false
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
@@ -92,7 +103,51 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		Secure:   h.cookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, h.redirectURL, http.StatusFound)
+	return true
+}
+
+// ---- Login de demonstração (só registrado com DEV_LOGIN=true) ----
+
+// GET /auth/dev/users
+func (h *AuthHandler) DevUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := h.svc.DemoUsers(r.Context())
+	if err != nil {
+		slog.Error("demo users", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	out := make([]userResponse, 0, len(users))
+	for _, u := range users {
+		out = append(out, toUserResponse(u))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"users": out})
+}
+
+// POST /auth/dev/login {"userId": 3}
+func (h *AuthHandler) DevLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID int64 `json:"userId"`
+	}
+	if err := readJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	user, err := h.svc.DemoLogin(r.Context(), req.UserID)
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	case errors.Is(err, domain.ErrForbidden):
+		writeError(w, http.StatusForbidden, "only demo accounts can use demo login")
+		return
+	case err != nil:
+		slog.Error("demo login", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if h.startSession(w, user.ID) {
+		writeJSON(w, http.StatusOK, toUserResponse(user))
+	}
 }
 
 // POST /auth/logout

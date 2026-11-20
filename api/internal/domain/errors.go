@@ -12,6 +12,7 @@ var (
 
 	ErrInventoryPrivate    = errors.New("steam inventory is private")
 	ErrUpstreamRateLimited = errors.New("steam is rate limiting requests")
+	ErrDemoAccount         = errors.New("demo accounts are not linked to steam")
 
 	ErrItemNotTradable   = errors.New("item is not tradable")
 	ErrItemAlreadyListed = errors.New("item already has an active listing")

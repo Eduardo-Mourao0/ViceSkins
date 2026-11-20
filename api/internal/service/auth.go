@@ -18,6 +18,7 @@ import (
 type UserRepository interface {
 	UpsertUserBySteamID(ctx context.Context, arg repository.UpsertUserBySteamIDParams) (repository.User, error)
 	GetUserByID(ctx context.Context, id int64) (repository.User, error)
+	ListDemoUsers(ctx context.Context) ([]repository.User, error)
 }
 
 type SteamAuth interface {
@@ -74,6 +75,31 @@ func (s *AuthService) GetUser(ctx context.Context, id int64) (domain.User, error
 		return domain.User{}, fmt.Errorf("get user: %w", err)
 	}
 	return toDomainUser(u), nil
+}
+
+// DemoUsers lista as contas de demonstração (só usado com DEV_LOGIN ligado).
+func (s *AuthService) DemoUsers(ctx context.Context) ([]domain.User, error) {
+	rows, err := s.users.ListDemoUsers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list demo users: %w", err)
+	}
+	out := make([]domain.User, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, toDomainUser(r))
+	}
+	return out, nil
+}
+
+// DemoLogin valida que o usuário é uma conta demo. Contas reais só entram pela Steam.
+func (s *AuthService) DemoLogin(ctx context.Context, userID int64) (domain.User, error) {
+	u, err := s.GetUser(ctx, userID)
+	if err != nil {
+		return domain.User{}, err
+	}
+	if !u.IsDemo() {
+		return domain.User{}, domain.ErrForbidden
+	}
+	return u, nil
 }
 
 func toDomainUser(u repository.User) domain.User {

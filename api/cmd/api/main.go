@@ -53,6 +53,9 @@ func run() error {
 		return fmt.Errorf("ping db: %w", err)
 	}
 
+	if cfg.DevLogin {
+		slog.Warn("DEV_LOGIN enabled: anyone can log in as the demo accounts. Never use in production.")
+	}
 	if cfg.SteamAPIKey == "" {
 		slog.Warn("STEAM_API_KEY not set: steam login will fail when fetching the profile")
 	}
@@ -89,6 +92,7 @@ func run() error {
 		Wallet:       handler.NewWalletHandler(service.NewWalletService(store)),
 		Transactions: handler.NewTransactionHandler(purchaseSvc, service.NewHistoryService(store)),
 		Tokens:       tokens,
+		DevLogin:     cfg.DevLogin,
 	})
 
 	srv := &http.Server{

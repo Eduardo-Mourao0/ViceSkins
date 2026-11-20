@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { Suspense } from "react";
 import { useLogout, useMe } from "@/lib/queries";
 import { formatPrice } from "@/lib/format";
+import { DemoLoginButton } from "./demo-login";
 import { Button, SteamLoginButton } from "./ui";
 
 const nav = [
@@ -101,7 +102,12 @@ export function Header() {
               </Button>
             </>
           ) : (
-            <SteamLoginButton />
+            <>
+              <div className="hidden sm:block">
+                <DemoLoginButton />
+              </div>
+              <SteamLoginButton />
+            </>
           )}
         </div>
       </div>

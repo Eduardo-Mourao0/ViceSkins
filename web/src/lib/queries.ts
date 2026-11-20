@@ -142,6 +142,36 @@ export function useMe() {
   });
 }
 
+/** Contas da seed de demonstração. Lista vazia quando o login demo está desligado (404). */
+export function useDemoUsers() {
+  return useQuery({
+    queryKey: ["demo-users"],
+    queryFn: async () => {
+      try {
+        return (await api<{ users: User[] }>("/auth/dev/users")).users;
+      } catch (e) {
+        if (isApiError(e, 404)) return [];
+        throw e;
+      }
+    },
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
+export function useDemoLogin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: number) =>
+      api<User>("/auth/dev/login", { method: "POST", body: JSON.stringify({ userId }) }),
+    onSuccess: async (user) => {
+      // Trocou de usuário: nada do cache anterior vale mais.
+      await qc.resetQueries();
+      qc.setQueryData(keys.me, user);
+    },
+  });
+}
+
 export function useLogout() {
   const qc = useQueryClient();
   return useMutation({

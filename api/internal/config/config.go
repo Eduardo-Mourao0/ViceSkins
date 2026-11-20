@@ -17,6 +17,7 @@ type Config struct {
 	JWTSecret       string
 	SteamAPIKey     string
 	CookieSecure    bool
+	DevLogin        bool // login sem Steam nas contas demo da seed
 
 	PlatformFeeBps    int64         // taxa da plataforma em basis points (200 = 2%)
 	TradeHoldDuration time.Duration // proteção de troca antes de pagar o vendedor
@@ -32,11 +33,16 @@ func Load() (Config, error) {
 		JWTSecret:       os.Getenv("JWT_SECRET"),
 		SteamAPIKey:     os.Getenv("STEAM_API_KEY"),
 		CookieSecure:    os.Getenv("COOKIE_SECURE") == "true",
+		DevLogin:        os.Getenv("DEV_LOGIN") == "true",
 	}
 
 	var errs []error
 	if cfg.DatabaseURL == "" {
 		errs = append(errs, errors.New("DATABASE_URL is required"))
+	}
+	// COOKIE_SECURE=true indica produção (HTTPS): ali o login demo nunca pode existir.
+	if cfg.DevLogin && cfg.CookieSecure {
+		errs = append(errs, errors.New("DEV_LOGIN must not be enabled together with COOKIE_SECURE=true"))
 	}
 	if len(cfg.JWTSecret) < 32 {
 		errs = append(errs, errors.New("JWT_SECRET must have at least 32 characters"))

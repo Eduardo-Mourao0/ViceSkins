@@ -31,6 +31,43 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 	return i, err
 }
 
+const listDemoUsers = `-- name: ListDemoUsers :many
+SELECT id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at FROM users
+WHERE steam_id LIKE 'demo-%'
+ORDER BY id
+`
+
+// Usuários criados pela seed de demonstração (db/seed/dev_seed.sql).
+func (q *Queries) ListDemoUsers(ctx context.Context) ([]User, error) {
+	rows, err := q.db.Query(ctx, listDemoUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.SteamID,
+			&i.DisplayName,
+			&i.AvatarURL,
+			&i.BalanceCents,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.InventoryRefreshAt,
+			&i.InventorySyncedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertUserBySteamID = `-- name: UpsertUserBySteamID :one
 INSERT INTO users (steam_id, display_name, avatar_url)
 VALUES ($1, $2, $3)

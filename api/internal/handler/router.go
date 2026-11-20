@@ -16,6 +16,7 @@ type Deps struct {
 	Wallet       *WalletHandler
 	Transactions *TransactionHandler
 	Tokens       TokenIssuer
+	DevLogin     bool // registra o login de demonstração (só em dev)
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -31,6 +32,12 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/steam/login", d.Auth.Login)
 		r.Get("/steam/callback", d.Auth.Callback)
 		r.Post("/logout", d.Auth.Logout)
+
+		// Desligado: as rotas nem existem (404), em vez de existirem e recusarem.
+		if d.DevLogin {
+			r.Get("/dev/users", d.Auth.DevUsers)
+			r.Post("/dev/login", d.Auth.DevLogin)
+		}
 	})
 
 	// Mercado: público, sem login.
