@@ -53,21 +53,23 @@ type TradeOutbox struct {
 }
 
 type Transaction struct {
-	ID            int64
-	ListingID     int64
-	BuyerID       int64
-	SellerID      int64
-	ItemID        int64
-	PriceCents    int64
-	FeeCents      int64
-	Status        string
-	TradeOfferID  *string
-	HoldUntil     *time.Time
-	FailureReason *string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	BuyerTradeURL *string
-	DeadlineAt    *time.Time
+	ID             int64
+	ListingID      int64
+	BuyerID        int64
+	SellerID       int64
+	ItemID         int64
+	PriceCents     int64
+	FeeCents       int64
+	Status         string
+	TradeOfferID   *string
+	HoldUntil      *time.Time
+	FailureReason  *string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	BuyerTradeURL  *string
+	DeadlineAt     *time.Time
+	LastCheckedAt  *time.Time
+	LateDeliveryAt *time.Time
 }
 
 type User struct {
@@ -81,6 +83,8 @@ type User struct {
 	InventoryRefreshAt *time.Time
 	InventorySyncedAt  *time.Time
 	TradeURL           *string
+	SteamAPIKeyEnc     []byte
+	SteamAPIKeyLast4   *string
 }
 
 type WalletEntry struct {

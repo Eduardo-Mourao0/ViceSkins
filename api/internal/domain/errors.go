@@ -22,5 +22,10 @@ var (
 	ErrCannotBuyOwnListing = errors.New("cannot buy your own listing")
 	ErrInvalidTransition   = errors.New("invalid transaction status transition")
 
-	ErrTradeURLRequired = errors.New("trade url required")
+	ErrTradeURLRequired  = errors.New("trade url required")
+	ErrAPIKeyRequired    = errors.New("steam api key required for items without float")
+	ErrInvalidAPIKey     = errors.New("invalid steam api key")
+	ErrFeatureDisabled   = errors.New("feature disabled on this server")
+	ErrCannotCancelOffer = errors.New("the trade offer was already sent and cannot be cancelled by the platform")
+	ErrTradeUnverified   = errors.New("could not verify the trade on steam right now")
 )

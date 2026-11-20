@@ -27,7 +27,7 @@ func (q *Queries) CancelActiveListingsForItem(ctx context.Context, itemID int64)
 const createTransaction = `-- name: CreateTransaction :one
 INSERT INTO transactions (listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, buyer_trade_url, deadline_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz)
-RETURNING id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at, buyer_trade_url, deadline_at
+RETURNING id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at, buyer_trade_url, deadline_at, last_checked_at, late_delivery_at
 `
 
 type CreateTransactionParams struct {
@@ -69,6 +69,8 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		&i.UpdatedAt,
 		&i.BuyerTradeURL,
 		&i.DeadlineAt,
+		&i.LastCheckedAt,
+		&i.LateDeliveryAt,
 	)
 	return i, err
 }
@@ -118,7 +120,7 @@ func (q *Queries) GetListingForUpdate(ctx context.Context, id int64) (Listing, e
 
 const getTransaction = `-- name: GetTransaction :one
 
-SELECT id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at, buyer_trade_url, deadline_at FROM transactions
+SELECT id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at, buyer_trade_url, deadline_at, last_checked_at, late_delivery_at FROM transactions
 WHERE id = $1
 `
 
@@ -142,12 +144,14 @@ func (q *Queries) GetTransaction(ctx context.Context, id int64) (Transaction, er
 		&i.UpdatedAt,
 		&i.BuyerTradeURL,
 		&i.DeadlineAt,
+		&i.LastCheckedAt,
+		&i.LateDeliveryAt,
 	)
 	return i, err
 }
 
 const getTransactionDetail = `-- name: GetTransactionDetail :one
-SELECT transactions.id, transactions.listing_id, transactions.buyer_id, transactions.seller_id, transactions.item_id, transactions.price_cents, transactions.fee_cents, transactions.status, transactions.trade_offer_id, transactions.hold_until, transactions.failure_reason, transactions.created_at, transactions.updated_at, transactions.buyer_trade_url, transactions.deadline_at,
+SELECT transactions.id, transactions.listing_id, transactions.buyer_id, transactions.seller_id, transactions.item_id, transactions.price_cents, transactions.fee_cents, transactions.status, transactions.trade_offer_id, transactions.hold_until, transactions.failure_reason, transactions.created_at, transactions.updated_at, transactions.buyer_trade_url, transactions.deadline_at, transactions.last_checked_at, transactions.late_delivery_at,
        inventory_items.id, inventory_items.owner_id, inventory_items.asset_id, inventory_items.class_id, inventory_items.instance_id, inventory_items.market_hash_name, inventory_items.name, inventory_items.item_type, inventory_items.weapon, inventory_items.rarity, inventory_items.rarity_color, inventory_items.exterior, inventory_items.float_value, inventory_items.paint_seed, inventory_items.icon_url, inventory_items.stickers, inventory_items.tradable, inventory_items.marketable, inventory_items.removed_at, inventory_items.created_at, inventory_items.updated_at,
        buyer.display_name  AS buyer_name,
        buyer.avatar_url    AS buyer_avatar_url,
@@ -188,6 +192,8 @@ func (q *Queries) GetTransactionDetail(ctx context.Context, id int64) (GetTransa
 		&i.Transaction.UpdatedAt,
 		&i.Transaction.BuyerTradeURL,
 		&i.Transaction.DeadlineAt,
+		&i.Transaction.LastCheckedAt,
+		&i.Transaction.LateDeliveryAt,
 		&i.InventoryItem.ID,
 		&i.InventoryItem.OwnerID,
 		&i.InventoryItem.AssetID,
@@ -218,7 +224,7 @@ func (q *Queries) GetTransactionDetail(ctx context.Context, id int64) (GetTransa
 }
 
 const getTransactionForUpdate = `-- name: GetTransactionForUpdate :one
-SELECT id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at, buyer_trade_url, deadline_at FROM transactions
+SELECT id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at, buyer_trade_url, deadline_at, last_checked_at, late_delivery_at FROM transactions
 WHERE id = $1
 FOR UPDATE
 `
@@ -242,6 +248,8 @@ func (q *Queries) GetTransactionForUpdate(ctx context.Context, id int64) (Transa
 		&i.UpdatedAt,
 		&i.BuyerTradeURL,
 		&i.DeadlineAt,
+		&i.LastCheckedAt,
+		&i.LateDeliveryAt,
 	)
 	return i, err
 }
@@ -384,7 +392,7 @@ func (q *Queries) ListTransactionIDsByStatus(ctx context.Context, arg ListTransa
 
 const listUserTransactions = `-- name: ListUserTransactions :many
 
-SELECT transactions.id, transactions.listing_id, transactions.buyer_id, transactions.seller_id, transactions.item_id, transactions.price_cents, transactions.fee_cents, transactions.status, transactions.trade_offer_id, transactions.hold_until, transactions.failure_reason, transactions.created_at, transactions.updated_at, transactions.buyer_trade_url, transactions.deadline_at,
+SELECT transactions.id, transactions.listing_id, transactions.buyer_id, transactions.seller_id, transactions.item_id, transactions.price_cents, transactions.fee_cents, transactions.status, transactions.trade_offer_id, transactions.hold_until, transactions.failure_reason, transactions.created_at, transactions.updated_at, transactions.buyer_trade_url, transactions.deadline_at, transactions.last_checked_at, transactions.late_delivery_at,
        inventory_items.id, inventory_items.owner_id, inventory_items.asset_id, inventory_items.class_id, inventory_items.instance_id, inventory_items.market_hash_name, inventory_items.name, inventory_items.item_type, inventory_items.weapon, inventory_items.rarity, inventory_items.rarity_color, inventory_items.exterior, inventory_items.float_value, inventory_items.paint_seed, inventory_items.icon_url, inventory_items.stickers, inventory_items.tradable, inventory_items.marketable, inventory_items.removed_at, inventory_items.created_at, inventory_items.updated_at,
        buyer.display_name  AS buyer_name,
        buyer.avatar_url    AS buyer_avatar_url,
@@ -456,6 +464,8 @@ func (q *Queries) ListUserTransactions(ctx context.Context, arg ListUserTransact
 			&i.Transaction.UpdatedAt,
 			&i.Transaction.BuyerTradeURL,
 			&i.Transaction.DeadlineAt,
+			&i.Transaction.LastCheckedAt,
+			&i.Transaction.LateDeliveryAt,
 			&i.InventoryItem.ID,
 			&i.InventoryItem.OwnerID,
 			&i.InventoryItem.AssetID,
@@ -561,7 +571,7 @@ SET status         = $1,
     deadline_at    = COALESCE($5, deadline_at),
     updated_at     = now()
 WHERE id = $6 AND status = $7
-RETURNING id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at, buyer_trade_url, deadline_at
+RETURNING id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at, buyer_trade_url, deadline_at, last_checked_at, late_delivery_at
 `
 
 type UpdateTransactionStatusParams struct {
@@ -603,6 +613,8 @@ func (q *Queries) UpdateTransactionStatus(ctx context.Context, arg UpdateTransac
 		&i.UpdatedAt,
 		&i.BuyerTradeURL,
 		&i.DeadlineAt,
+		&i.LastCheckedAt,
+		&i.LateDeliveryAt,
 	)
 	return i, err
 }

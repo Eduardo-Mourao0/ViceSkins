@@ -11,30 +11,34 @@ func TestSimulated(t *testing.T) {
 	now := time.Unix(0, 0)
 	s := NewSimulated(time.Minute)
 	s.now = func() time.Time { return now }
+	t1, t2 := Trade{TransactionID: 1}, Trade{TransactionID: 2}
 
-	id, _ := s.SendOffer(ctx, Offer{TransactionID: 1})
-	if st, _ := s.OfferState(ctx, id); st != OfferPending {
-		t.Fatalf("state = %s, want pending", st)
+	if _, err := s.Start(ctx, t1); err != nil {
+		t.Fatal(err)
+	}
+	if o, _ := s.Check(ctx, t1); o.Offer != OfferPending || o.Item != ItemWithSeller {
+		t.Fatalf("observation = %+v, want pending offer with the item at the seller", o)
 	}
 
 	now = now.Add(30 * time.Second)
-	if _, err := s.SendOffer(ctx, Offer{TransactionID: 1}); err != nil { // retry
+	if _, err := s.Start(ctx, t1); err != nil { // retry
 		t.Fatal(err)
 	}
 	now = now.Add(30 * time.Second)
-	if st, _ := s.OfferState(ctx, id); st != OfferAccepted {
-		t.Fatalf("state = %s, want accepted (retry must not reset the clock)", st)
+	o, _ := s.Check(ctx, t1)
+	if o.Offer != OfferAccepted || o.Item != ItemWithBuyer || o.TradedAt == nil || !o.TradedAt.Equal(time.Unix(60, 0)) {
+		t.Fatalf("observation = %+v, want accepted at t=60s (retry must not reset the clock)", o)
 	}
-	if err := s.CancelOffer(ctx, id); err == nil {
+	if err := s.Cancel(ctx, t1); err == nil {
 		t.Fatal("cancelling an accepted offer must fail")
 	}
 
-	id2, _ := s.SendOffer(ctx, Offer{TransactionID: 2})
-	if err := s.CancelOffer(ctx, id2); err != nil {
+	s.Start(ctx, t2)
+	if err := s.Cancel(ctx, t2); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Hour)
-	if st, _ := s.OfferState(ctx, id2); st != OfferDeclined {
-		t.Fatalf("state = %s, want declined after cancel", st)
+	if o, _ := s.Check(ctx, t2); o.Offer != OfferDeclined || o.Item != ItemWithSeller {
+		t.Fatalf("observation = %+v, want declined with the item at the seller", o)
 	}
 }

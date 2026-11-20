@@ -22,3 +22,13 @@ UPDATE users
 SET trade_url = @trade_url, updated_at = now()
 WHERE id = @id
 RETURNING *;
+
+-- name: SetSteamAPIKey :one
+UPDATE users
+SET steam_api_key_enc = @key_enc, steam_api_key_last4 = @key_last4, updated_at = now()
+WHERE id = @id
+RETURNING *;
+
+-- name: GetSteamAPIKey :one
+SELECT steam_api_key_enc FROM users
+WHERE id = $1;

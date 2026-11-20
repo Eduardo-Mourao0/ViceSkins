@@ -23,11 +23,27 @@ type ListingStore interface {
 }
 
 type ListingService struct {
-	store ListingStore
+	store                     ListingStore
+	requireAPIKeyForFloatless bool
 }
 
-func NewListingService(store ListingStore) *ListingService {
-	return &ListingService{store: store}
+// ListingOption configura o ListingService (functional options, como as da Transition).
+type ListingOption func(*ListingService)
+
+// RequireAPIKeyForFloatless: com a verificação real pela Steam, itens sem
+// float (caixas, stickers...) não têm impressão digital para serem
+// reconhecidos no inventário do comprador. Só dá para acompanhar a troca
+// pela oferta, o que exige a API key do vendedor.
+func RequireAPIKeyForFloatless() ListingOption {
+	return func(s *ListingService) { s.requireAPIKeyForFloatless = true }
+}
+
+func NewListingService(store ListingStore, opts ...ListingOption) *ListingService {
+	s := &ListingService{store: store}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Create anuncia um item do inventário do vendedor.
@@ -64,6 +80,9 @@ func (s *ListingService) Create(ctx context.Context, sellerID, itemID, priceCent
 	}
 	if !item.Tradable || !item.Marketable {
 		return domain.Listing{}, domain.ErrItemNotTradable
+	}
+	if s.requireAPIKeyForFloatless && item.FloatValue == nil && len(u.SteamAPIKeyEnc) == 0 {
+		return domain.Listing{}, domain.ErrAPIKeyRequired
 	}
 
 	l, err := s.store.CreateListing(ctx, repository.CreateListingParams{

@@ -20,21 +20,36 @@ import (
 
 // ---- Ambiente de teste ----
 
+// fakeProvider imita a Steam. Por padrão age como o simulado: Start "envia"
+// a oferta, e o estado dela (state) decide onde o item está.
 type fakeProvider struct {
 	mu        sync.Mutex
 	sendErr   error
 	cancelErr error
-	delay     time.Duration // latência simulada da Steam em SendOffer
-	state     trade.OfferState
-	sends     int         // chamadas a SendOffer, com sucesso ou não
-	cancelled []string    // ofertas canceladas
-	lastOffer trade.Offer // última oferta recebida
+	checkErr  error
+	delay     time.Duration // latência simulada da Steam em Start
+
+	p2p          bool             // Start não envia nada (P2P real: o vendedor envia)
+	cannotCancel bool             // vendedor sem API key: Cancel → trade.ErrCannotCancel
+	state        trade.OfferState // estado da oferta das trocas iniciadas
+	location     trade.Location   // se preenchido, sobrepõe onde o item foi visto
+	tradedAt     *time.Time       // horário da troca informado pela "Steam"
+
+	// afterCheck roda uma vez, logo depois da próxima consulta: simula algo
+	// acontecendo na Steam entre a observação e a ação de quem consultou.
+	afterCheck func()
+
+	started     map[int64]bool
+	cancelledTx map[int64]bool
+	sends       int         // chamadas a Start, com sucesso ou não
+	cancelled   []string    // ofertas canceladas
+	lastTrade   trade.Trade // última troca iniciada
 }
 
-func (p *fakeProvider) SendOffer(_ context.Context, o trade.Offer) (string, error) {
+func (p *fakeProvider) Start(_ context.Context, t trade.Trade) (string, error) {
 	p.mu.Lock()
 	p.sends++
-	p.lastOffer = o
+	p.lastTrade = t
 	delay, sendErr := p.delay, p.sendErr
 	p.mu.Unlock()
 
@@ -42,22 +57,64 @@ func (p *fakeProvider) SendOffer(_ context.Context, o trade.Offer) (string, erro
 	if sendErr != nil {
 		return "", sendErr
 	}
-	return fmt.Sprintf("fake-%d", o.TransactionID), nil
-}
-
-func (p *fakeProvider) OfferState(context.Context, string) (trade.OfferState, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.state, nil
-}
-
-func (p *fakeProvider) CancelOffer(_ context.Context, offerID string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.cancelErr != nil {
-		return p.cancelErr
+	p.started[t.TransactionID] = true
+	if p.p2p {
+		return "", nil
 	}
-	p.cancelled = append(p.cancelled, offerID)
+	return fmt.Sprintf("fake-%d", t.TransactionID), nil
+}
+
+func (p *fakeProvider) Check(ctx context.Context, t trade.Trade) (trade.Observation, error) {
+	o, err := p.observe(t)
+	p.mu.Lock()
+	hook := p.afterCheck
+	p.afterCheck = nil // dispara uma vez só
+	p.mu.Unlock()
+	if hook != nil {
+		hook() // fora do mutex: o gancho pode chamar o service, que chama o fake
+	}
+	return o, err
+}
+
+func (p *fakeProvider) observe(t trade.Trade) (trade.Observation, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.checkErr != nil {
+		return trade.Observation{}, p.checkErr
+	}
+	var o trade.Observation
+	switch {
+	case p.cancelledTx[t.TransactionID]:
+		o = trade.Observation{Offer: trade.OfferDeclined, Item: trade.ItemWithSeller}
+	case !p.started[t.TransactionID]:
+		o = trade.Observation{Item: trade.ItemWithSeller}
+	default:
+		o = trade.Observation{Offer: p.state, OfferID: t.OfferID, Item: trade.ItemWithSeller}
+		if p.state == trade.OfferAccepted {
+			o.Item, o.TradedAt = trade.ItemWithBuyer, p.tradedAt
+		}
+	}
+	if p.location != "" {
+		o.Item = p.location
+	}
+	return o, nil
+}
+
+func (p *fakeProvider) Cancel(_ context.Context, t trade.Trade) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	switch {
+	case p.cannotCancel:
+		return trade.ErrCannotCancel
+	case p.cancelErr != nil:
+		return p.cancelErr
+	case p.started[t.TransactionID] && p.state == trade.OfferAccepted:
+		return errors.New("offer already accepted") // como na Steam
+	}
+	p.cancelledTx[t.TransactionID] = true
+	p.cancelled = append(p.cancelled, t.OfferID)
 	return nil
 }
 
@@ -90,15 +147,21 @@ const (
 	buyerTimeout    = 3 * time.Hour
 )
 
-func setup(t *testing.T) *env {
+func setup(t *testing.T, opts ...func(*service.PurchaseConfig)) *env {
 	pool := testdb.New(t)
 	store := repository.NewStore(pool)
-	provider := &fakeProvider{state: trade.OfferAccepted}
+	provider := &fakeProvider{state: trade.OfferAccepted, started: map[int64]bool{}, cancelledTx: map[int64]bool{}}
 	// HoldDuration 0: a proteção "acaba" na hora, para testar o fluxo inteiro.
-	svc := service.NewPurchaseService(store, provider, service.PurchaseConfig{
+	// CheckInterval mínimo: cada chamada dos jobs verifica de novo.
+	cfg := service.PurchaseConfig{
 		FeeBps: feeBps, HoldDuration: 0, MaxSendAttempts: maxSendAttempts,
 		SellerSendTimeout: sellerTimeout, BuyerAcceptTimeout: buyerTimeout,
-	})
+		CheckInterval: time.Nanosecond,
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	svc := service.NewPurchaseService(store, provider, cfg)
 	return &env{t: t, ctx: context.Background(), pool: pool, store: store, provider: provider, svc: svc}
 }
 
@@ -230,7 +293,7 @@ func TestPurchaseFullLifecycle(t *testing.T) {
 	}
 
 	// Comprador "aceita" a troca → on_hold: item passa para ele, vendedor ainda não recebe.
-	if err := e.svc.ProcessSentOffers(e.ctx); err != nil {
+	if err := e.svc.WatchTrades(e.ctx); err != nil {
 		t.Fatal(err)
 	}
 	tx, _ = e.svc.GetForUser(e.ctx, buyer, tx.ID)
@@ -650,7 +713,7 @@ func TestDeclinedOfferRefundsBuyer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.svc.ProcessSentOffers(e.ctx); err != nil {
+	if err := e.svc.WatchTrades(e.ctx); err != nil {
 		t.Fatal(err)
 	}
 	tx, _ = e.svc.GetForUser(e.ctx, buyer, tx.ID)
@@ -690,6 +753,7 @@ func TestReversalDuringHoldReturnsItemAndRefunds(t *testing.T) {
 func TestCancelByBuyer(t *testing.T) {
 	e := setup(t)
 	seller, buyer := e.user(0), e.user(10_000)
+	e.provider.set(func(p *fakeProvider) { p.state = trade.OfferPending }) // comprador ainda não aceitou
 
 	t.Run("buyer cancels before trade is accepted", func(t *testing.T) {
 		listingID, _ := e.listing(seller, 5_000)

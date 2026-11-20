@@ -7,6 +7,8 @@ export type User = {
   avatarUrl: string;
   balanceCents: number;
   tradeUrl: string | null; // obrigatória para comprar e anunciar
+  hasSteamApiKey: boolean; // a key em si nunca vem da API
+  steamApiKeyLast4: string | null;
 };
 
 export type Sticker = {
@@ -59,6 +61,7 @@ export type Transaction = {
   failureReason: string | null;
   deadlineAt: string | null; // prazo da etapa atual (pending/sent)
   buyerTradeUrl: string | null; // só para o vendedor, enquanto precisa enviar a oferta
+  lateDeliveryAt: string | null; // item chegou ao comprador depois do estorno: em análise
   createdAt: string;
   updatedAt: string;
 };

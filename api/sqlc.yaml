@@ -17,6 +17,11 @@ sql:
           buyer_avatar_url: BuyerAvatarURL
           trade_url: TradeURL
           buyer_trade_url: BuyerTradeURL
+          steam_api_key_enc: SteamAPIKeyEnc
+          steam_api_key_last4: SteamAPIKeyLast4
+          seller_api_key_enc: SellerAPIKeyEnc
+          seller_steam_id: SellerSteamID
+          buyer_steam_id: BuyerSteamID
         overrides:
           - db_type: timestamptz
             go_type: time.Time

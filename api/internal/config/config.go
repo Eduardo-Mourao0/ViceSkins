@@ -25,6 +25,12 @@ type Config struct {
 
 	SellerSendTimeout  time.Duration // prazo do vendedor para enviar a oferta
 	BuyerAcceptTimeout time.Duration // prazo do comprador para aceitar a oferta
+
+	// Verificação das trocas: "simulated" (padrão, dev/demo) ou "steam" (P2P
+	// real, híbrida: inventário público + API key opcional do vendedor).
+	TradeProvider      string
+	TradeCheckInterval time.Duration // cada troca é verificada no máximo nesse intervalo
+	SecretsKey         string        // base64 de 32 bytes: criptografa as API keys dos vendedores
 }
 
 func Load() (Config, error) {
@@ -67,6 +73,25 @@ func Load() (Config, error) {
 	}
 	if cfg.SimAcceptAfter, err = parseDuration("SIM_TRADE_ACCEPT_AFTER", "15s"); err != nil {
 		errs = append(errs, err)
+	}
+
+	cfg.SecretsKey = os.Getenv("SECRETS_KEY")
+	switch cfg.TradeProvider = getenv("TRADE_PROVIDER", "simulated"); cfg.TradeProvider {
+	case "simulated":
+	case "steam":
+		if cfg.SecretsKey == "" {
+			errs = append(errs, errors.New("SECRETS_KEY is required with TRADE_PROVIDER=steam"))
+		}
+	default:
+		errs = append(errs, errors.New("TRADE_PROVIDER must be simulated or steam"))
+	}
+	// Na Steam, o inventário tem rate limit agressivo: verificar com calma.
+	defaultCheck := "5s"
+	if cfg.TradeProvider == "steam" {
+		defaultCheck = "2m"
+	}
+	if cfg.TradeCheckInterval, err = parseDuration("TRADE_CHECK_INTERVAL", defaultCheck); err != nil || cfg.TradeCheckInterval == 0 {
+		errs = append(errs, errors.New("TRADE_CHECK_INTERVAL must be a positive duration"))
 	}
 
 	if err := errors.Join(errs...); err != nil {

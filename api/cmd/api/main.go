@@ -19,6 +19,7 @@ import (
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/handler"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/jobs"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/repository"
+	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/secrets"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/service"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/steam"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/trade"
@@ -64,14 +65,40 @@ func run() error {
 	store := repository.NewStore(pool)
 	steamClient := steam.NewClient(cfg.SteamAPIKey, cfg.PublicAPIURL, cfg.PublicAPIURL+"/auth/steam/callback")
 	tokens := auth.NewTokens(cfg.JWTSecret, 7*24*time.Hour)
-	authSvc := service.NewAuthService(store, steamClient)
+	// Interface nil de verdade: guardar um *secrets.Box nil numa interface daria
+	// uma interface NÃO nil (tipo preenchido, valor nil), e o `keys == nil`
+	// dos services nunca seria verdadeiro.
+	var keys service.KeyBox
+	if cfg.SecretsKey != "" {
+		box, err := secrets.NewBox(cfg.SecretsKey)
+		if err != nil {
+			return fmt.Errorf("SECRETS_KEY: %w", err)
+		}
+		keys = box
+	}
+
+	var provider service.TradeProvider
+	var listingOpts []service.ListingOption
+	switch cfg.TradeProvider {
+	case "steam":
+		// 2s entre consultas de inventário: o endpoint tem rate limit agressivo.
+		provider = trade.NewSteam(steamClient, 2*time.Second)
+		listingOpts = append(listingOpts, service.RequireAPIKeyForFloatless())
+	default:
+		provider = trade.NewSimulated(cfg.SimAcceptAfter)
+	}
+	slog.Info("trade verification", "provider", cfg.TradeProvider, "check_interval", cfg.TradeCheckInterval)
+
+	authSvc := service.NewAuthService(store, steamClient, keys)
 	inventorySvc := service.NewInventoryService(store, steamClient, 5*time.Minute)
-	listingSvc := service.NewListingService(store)
-	purchaseSvc := service.NewPurchaseService(store, trade.NewSimulated(cfg.SimAcceptAfter), service.PurchaseConfig{
+	listingSvc := service.NewListingService(store, listingOpts...)
+	purchaseSvc := service.NewPurchaseService(store, provider, service.PurchaseConfig{
 		FeeBps:             cfg.PlatformFeeBps,
 		HoldDuration:       cfg.TradeHoldDuration,
 		SellerSendTimeout:  cfg.SellerSendTimeout,
 		BuyerAcceptTimeout: cfg.BuyerAcceptTimeout,
+		CheckInterval:      cfg.TradeCheckInterval,
+		Keys:               keys,
 	})
 
 	// Jobs em background. Ao sair de run(), os defers rodam em ordem inversa:
@@ -83,9 +110,12 @@ func run() error {
 		jobsWG.Wait()
 	}()
 	jobs.Every(jobsCtx, &jobsWG, "trade-outbox", 3*time.Second, purchaseSvc.DispatchPendingOffers)
-	jobs.Every(jobsCtx, &jobsWG, "trade-offers", 5*time.Second, purchaseSvc.ProcessSentOffers)
+	// O job roda com frequência, mas cada troca só é verificada a cada
+	// TRADE_CHECK_INTERVAL (controle por last_checked_at no banco).
+	jobs.Every(jobsCtx, &jobsWG, "trade-watch", 5*time.Second, purchaseSvc.WatchTrades)
 	jobs.Every(jobsCtx, &jobsWG, "hold-release", 30*time.Second, purchaseSvc.ReleaseDueHolds)
 	jobs.Every(jobsCtx, &jobsWG, "expire-deadlines", 30*time.Second, purchaseSvc.ExpireDeadlines)
+	jobs.Every(jobsCtx, &jobsWG, "late-delivery-watch", time.Minute, purchaseSvc.WatchClosedTrades)
 
 	router := handler.NewRouter(handler.Deps{
 		DB:           pool,

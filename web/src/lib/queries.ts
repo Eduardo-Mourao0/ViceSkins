@@ -273,3 +273,33 @@ export function useSetTradeURL() {
     onSuccess: (me) => qc.setQueryData(keys.me, me),
   });
 }
+
+/** Vendedor avisa que enviou a oferta (sem API key a plataforma não a vê). */
+export function useMarkSent() {
+  const qc = useQueryClient();
+  const invalidate = useInvalidateMoneyViews();
+  return useMutation({
+    mutationFn: (txId: number) => api<TransactionDetail>(`/transactions/${txId}/sent`, { method: "POST" }),
+    onSuccess: (tx) => {
+      qc.setQueryData(keys.transaction(tx.id), tx);
+      invalidate();
+    },
+  });
+}
+
+export function useSetSteamAPIKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (apiKey: string) =>
+      api<User>("/me/steam-api-key", { method: "PUT", body: JSON.stringify({ apiKey }) }),
+    onSuccess: (me) => qc.setQueryData(keys.me, me),
+  });
+}
+
+export function useDeleteSteamAPIKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<User>("/me/steam-api-key", { method: "DELETE" }),
+    onSuccess: (me) => qc.setQueryData(keys.me, me),
+  });
+}

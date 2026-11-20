@@ -14,43 +14,56 @@ import (
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/trade"
 )
 
-// TradeProvider envia e acompanha a oferta de troca na Steam.
-// No MVP a implementação é trade.Simulated.
+// TradeProvider acompanha a troca na Steam (ver o pacote trade).
 //
-// SendOffer pode ser chamado mais de uma vez para a mesma transação (retry
-// depois de um timeout, lease vencido), então precisa ser idempotente por
-// trade.Offer.TransactionID. Erros com trade.ErrRejected são permanentes;
-// os outros são tentados de novo.
+// Start pode ser chamado mais de uma vez para a mesma transação (retry depois
+// de um timeout, lease vencido), então precisa ser idempotente. Devolve o ID
+// da oferta se o provider a enviou (simulado), ou "" no P2P real, em que quem
+// envia é o vendedor. Erros com trade.ErrRejected são permanentes.
 type TradeProvider interface {
-	SendOffer(ctx context.Context, o trade.Offer) (offerID string, err error)
-	OfferState(ctx context.Context, offerID string) (trade.OfferState, error)
-	CancelOffer(ctx context.Context, offerID string) error
+	Start(ctx context.Context, t trade.Trade) (offerID string, err error)
+	Check(ctx context.Context, t trade.Trade) (trade.Observation, error)
+	Cancel(ctx context.Context, t trade.Trade) error // trade.ErrCannotCancel se não houver como
+}
+
+// KeyBox abre a API key do vendedor guardada no banco (*secrets.Box).
+type KeyBox interface {
+	Seal(plaintext, aad []byte) ([]byte, error)
+	Open(sealed, aad []byte) ([]byte, error)
 }
 
 type PurchaseStore interface {
 	ExecTx(ctx context.Context, fn func(q *repository.Queries) error) error
 	GetTransaction(ctx context.Context, id int64) (repository.Transaction, error)
-	GetInventoryItem(ctx context.Context, id int64) (repository.InventoryItem, error)
-	ListTransactionIDsByStatus(ctx context.Context, arg repository.ListTransactionIDsByStatusParams) ([]int64, error)
 	ListDueHolds(ctx context.Context, arg repository.ListDueHoldsParams) ([]int64, error)
 	ListExpiredTransactions(ctx context.Context, arg repository.ListExpiredTransactionsParams) ([]int64, error)
 	ClaimTradeOutbox(ctx context.Context, arg repository.ClaimTradeOutboxParams) ([]repository.TradeOutbox, error)
 	RescheduleTradeOutbox(ctx context.Context, arg repository.RescheduleTradeOutboxParams) error
 	CloseTradeOutbox(ctx context.Context, arg repository.CloseTradeOutboxParams) error
+
+	GetTradeContext(ctx context.Context, id int64) (repository.GetTradeContextRow, error)
+	ListTradesToCheck(ctx context.Context, arg repository.ListTradesToCheckParams) ([]int64, error)
+	ListClosedTradesToWatch(ctx context.Context, arg repository.ListClosedTradesToWatchParams) ([]int64, error)
+	MarkTradeChecked(ctx context.Context, arg repository.MarkTradeCheckedParams) error
+	MarkLateDelivery(ctx context.Context, arg repository.MarkLateDeliveryParams) error
 }
 
 type PurchaseConfig struct {
 	FeeBps          int64         // taxa da plataforma em basis points (200 = 2%)
 	HoldDuration    time.Duration // proteção de troca da Steam (7 dias)
-	MaxSendAttempts int           // tentativas de enviar a oferta antes de desistir e estornar
+	MaxSendAttempts int           // tentativas de iniciar a troca antes de desistir e estornar
 
 	// Prazos das etapas. Perdeu o prazo → failed, com estorno ao comprador.
 	SellerSendTimeout  time.Duration // pending: vendedor enviar a oferta
 	BuyerAcceptTimeout time.Duration // sent: comprador aceitar
+
+	CheckInterval time.Duration // cada troca é verificada na Steam no máximo nesse intervalo
+	Keys          KeyBox        // nil: API keys de vendedor desligadas
 }
 
 const (
 	defaultStepTimeout     = 12 * time.Hour
+	defaultCheckInterval   = 2 * time.Minute
 	defaultMaxSendAttempts = 8                // com o backoff abaixo, ~10 min tentando
 	sendTimeout            = 15 * time.Second // limite de uma chamada ao TradeProvider
 	outboxLease            = time.Minute      // > sendTimeout: o lease não vence no meio do envio
@@ -74,6 +87,9 @@ func NewPurchaseService(store PurchaseStore, provider TradeProvider, cfg Purchas
 	}
 	if cfg.BuyerAcceptTimeout <= 0 {
 		cfg.BuyerAcceptTimeout = defaultStepTimeout
+	}
+	if cfg.CheckInterval <= 0 {
+		cfg.CheckInterval = defaultCheckInterval
 	}
 	return &PurchaseService{store: store, provider: provider, cfg: cfg, now: time.Now}
 }
@@ -226,36 +242,40 @@ func (s *PurchaseService) dispatch(ctx context.Context, row repository.TradeOutb
 		slog.Error("dispatch: get transaction", "tx", row.TransactionID, "err", err)
 		return // o lease vence e a linha volta para a fila
 	}
+	closeOutbox := func() {
+		err := s.store.CloseTradeOutbox(ctx, repository.CloseTradeOutboxParams{TransactionID: tx.ID, Now: s.now()})
+		logJobErr("close outbox", tx.ID, err)
+	}
 	if domain.TxStatus(tx.Status) != domain.TxPending {
-		// Já saiu de pending (ex.: comprador cancelou): não há o que enviar.
+		// Já saiu de pending (ex.: comprador cancelou): não há o que iniciar.
 		// A Transition fecha a linha; isto só cobre dados antigos.
-		logJobErr("close stale outbox", tx.ID, s.store.CloseTradeOutbox(ctx, repository.CloseTradeOutboxParams{TransactionID: tx.ID, Now: s.now()}))
+		closeOutbox()
 		return
 	}
-	item, err := s.store.GetInventoryItem(ctx, tx.ItemID)
+	t, _, err := s.tradeFor(ctx, tx.ID)
 	if err != nil {
-		slog.Error("dispatch: get item", "tx", tx.ID, "err", err)
+		slog.Error("dispatch: trade context", "tx", tx.ID, "err", err)
 		return
 	}
 
 	sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
-	offerID, sendErr := s.provider.SendOffer(sendCtx, trade.Offer{
-		TransactionID: tx.ID,
-		AssetID:       item.AssetID,
-		SellerID:      tx.SellerID,
-		BuyerID:       tx.BuyerID,
-		BuyerTradeURL: deref(tx.BuyerTradeURL),
-	})
+	offerID, sendErr := s.provider.Start(sendCtx, t)
 	cancel()
 
 	switch {
+	case sendErr == nil && offerID == "":
+		// P2P real: a oferta é do vendedor. Fica pending até o job de
+		// verificação ver a oferta (ou o item) na Steam.
+		closeOutbox()
+
 	case sendErr == nil:
 		_, err := s.Transition(ctx, tx.ID, domain.TxSent, OfferID(offerID))
 		if errors.Is(err, domain.ErrInvalidTransition) {
 			// O comprador cancelou enquanto a oferta era enviada: ela existe
 			// na Steam, mas a compra não. Desfaz a oferta.
 			slog.Warn("offer sent for a transaction that left pending; cancelling it", "tx", tx.ID)
-			logJobErr("cancel orphan offer", tx.ID, s.provider.CancelOffer(ctx, offerID))
+			t.OfferID = offerID
+			logJobErr("cancel orphan offer", tx.ID, s.provider.Cancel(ctx, t))
 			return
 		}
 		logJobErr("mark offer sent", tx.ID, err)
@@ -290,14 +310,27 @@ func retryDelay(attempt int32) time.Duration {
 // ---- Máquina de estados ----
 
 type transitionOpts struct {
-	offerID *string
-	reason  *string
+	offerID  *string
+	reason   *string
+	tradedAt *time.Time
+	from     *domain.TxStatus
 }
 
 type TransitionOpt func(*transitionOpts)
 
 func OfferID(id string) TransitionOpt { return func(o *transitionOpts) { o.offerID = &id } }
 func Reason(r string) TransitionOpt   { return func(o *transitionOpts) { o.reason = &r } }
+
+// TradedAt é o horário real da troca informado pela Steam: a proteção de 7
+// dias conta a partir dele, não de quando a plataforma percebeu o aceite.
+func TradedAt(t *time.Time) TransitionOpt { return func(o *transitionOpts) { o.tradedAt = t } }
+
+// From exige que o status atual ainda seja o esperado. Decisões tomadas a
+// partir de uma observação da Steam usam isto: se outro job mudou o status
+// entre a observação e a ação, a ação é descartada (ErrInvalidTransition).
+// Sem isso, um estorno decidido com o item "no vendedor" poderia ser aplicado
+// a uma troca que acabou de ser aceita (on_hold → failed é válido).
+func From(s domain.TxStatus) TransitionOpt { return func(o *transitionOpts) { o.from = &s } }
 
 // Transition muda o status de uma transação e aplica os efeitos daquela
 // mudança, tudo numa transação SQL:
@@ -327,6 +360,9 @@ func (s *PurchaseService) Transition(ctx context.Context, txID int64, to domain.
 		}
 
 		from := domain.TxStatus(cur.Status)
+		if o.from != nil && *o.from != from {
+			return fmt.Errorf("%w: expected %s, found %s", domain.ErrInvalidTransition, *o.from, from)
+		}
 		if !from.CanTransitionTo(to) {
 			return fmt.Errorf("%w: %s → %s", domain.ErrInvalidTransition, from, to)
 		}
@@ -343,7 +379,14 @@ func (s *PurchaseService) Transition(ctx context.Context, txID int64, to domain.
 			deadline := s.now().Add(s.cfg.BuyerAcceptTimeout)
 			params.DeadlineAt = &deadline
 		case domain.TxOnHold:
-			holdUntil := s.now().Add(s.cfg.HoldDuration)
+			start := s.now()
+			// Só aceita um horário do passado (e não anterior à compra): um valor
+			// estranho vindo de fora não pode encurtar nem alongar a proteção.
+			// (created_at vem do relógio do banco: a margem cobre a diferença.)
+			if t := o.tradedAt; t != nil && t.Before(start) && !t.Before(cur.CreatedAt.Add(-offerSinceMargin)) {
+				start = *t
+			}
+			holdUntil := start.Add(s.cfg.HoldDuration)
 			params.HoldUntil = &holdUntil
 		}
 		updated, err = q.UpdateTransactionStatus(ctx, params)
@@ -406,38 +449,6 @@ func (s *PurchaseService) Transition(ctx context.Context, txID int64, to domain.
 	return toDomainTransaction(updated), nil
 }
 
-// CancelByBuyer deixa o comprador desistir enquanto a troca não foi aceita.
-func (s *PurchaseService) CancelByBuyer(ctx context.Context, buyerID, txID int64) (domain.Transaction, error) {
-	tx, err := s.store.GetTransaction(ctx, txID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.Transaction{}, domain.ErrNotFound
-	}
-	if err != nil {
-		return domain.Transaction{}, fmt.Errorf("get transaction: %w", err)
-	}
-	if tx.SellerID == buyerID {
-		return domain.Transaction{}, domain.ErrForbidden // vendedor vê, mas não cancela
-	}
-	if tx.BuyerID != buyerID {
-		return domain.Transaction{}, domain.ErrNotFound // não revela transações alheias
-	}
-	return s.abort(ctx, tx, domain.TxCancelled, "cancelada pelo comprador")
-}
-
-// abort encerra uma transação em andamento (→ cancelled ou failed, com estorno).
-//
-// Se a oferta já foi enviada, ela é cancelada na Steam ANTES do estorno. Se o
-// cancelamento falhar, nada muda: senão o comprador poderia aceitar a troca
-// e ficar com o item e o dinheiro.
-func (s *PurchaseService) abort(ctx context.Context, tx repository.Transaction, to domain.TxStatus, reason string) (domain.Transaction, error) {
-	if domain.TxStatus(tx.Status) == domain.TxSent && tx.TradeOfferID != nil {
-		if err := s.provider.CancelOffer(ctx, *tx.TradeOfferID); err != nil {
-			return domain.Transaction{}, fmt.Errorf("cancel trade offer: %w", err)
-		}
-	}
-	return s.Transition(ctx, tx.ID, to, Reason(reason))
-}
-
 // GetForUser devolve a transação se o usuário for o comprador ou o vendedor.
 func (s *PurchaseService) GetForUser(ctx context.Context, userID, txID int64) (domain.Transaction, error) {
 	tx, err := s.store.GetTransaction(ctx, txID)
@@ -453,81 +464,6 @@ func (s *PurchaseService) GetForUser(ctx context.Context, userID, txID int64) (d
 	return toDomainTransaction(tx), nil
 }
 
-// ---- Usados pelos jobs em background ----
-
-const jobBatchSize = 50
-
-// ProcessSentOffers consulta as ofertas enviadas: aceita → on_hold; recusada → failed.
-func (s *PurchaseService) ProcessSentOffers(ctx context.Context) error {
-	ids, err := s.store.ListTransactionIDsByStatus(ctx, repository.ListTransactionIDsByStatusParams{
-		Status:  string(domain.TxSent),
-		MaxRows: jobBatchSize,
-	})
-	if err != nil {
-		return fmt.Errorf("list sent transactions: %w", err)
-	}
-
-	for _, id := range ids {
-		tx, err := s.store.GetTransaction(ctx, id)
-		if err != nil || tx.TradeOfferID == nil {
-			continue
-		}
-		state, err := s.provider.OfferState(ctx, *tx.TradeOfferID)
-		if err != nil {
-			slog.Warn("offer state", "tx", id, "err", err)
-			continue
-		}
-		switch state {
-		case trade.OfferAccepted:
-			_, err = s.Transition(ctx, id, domain.TxOnHold)
-		case trade.OfferDeclined:
-			_, err = s.Transition(ctx, id, domain.TxFailed, Reason("oferta de troca recusada ou expirada"))
-		}
-		logJobErr("process sent offer", id, err)
-	}
-	return nil
-}
-
-// ExpireDeadlines encerra as transações que perderam o prazo da etapa atual:
-// vendedor não enviou a oferta (pending) ou comprador não aceitou (sent).
-// O comprador é estornado. Se cancelar a oferta na Steam falhar, a transação
-// fica como está e é tentada de novo no próximo tick.
-func (s *PurchaseService) ExpireDeadlines(ctx context.Context) error {
-	ids, err := s.store.ListExpiredTransactions(ctx, repository.ListExpiredTransactionsParams{
-		Now: s.now(), MaxRows: jobBatchSize,
-	})
-	if err != nil {
-		return fmt.Errorf("list expired transactions: %w", err)
-	}
-	for _, id := range ids {
-		tx, err := s.store.GetTransaction(ctx, id)
-		if err != nil {
-			slog.Error("expire: get transaction", "tx", id, "err", err)
-			continue
-		}
-		reason := "o vendedor não enviou a oferta de troca no prazo"
-		if domain.TxStatus(tx.Status) == domain.TxSent {
-			reason = "o comprador não aceitou a oferta de troca no prazo"
-		}
-		_, err = s.abort(ctx, tx, domain.TxFailed, reason)
-		logJobErr("expire transaction", id, err)
-	}
-	return nil
-}
-
-// ReleaseDueHolds conclui as transações cujo período de proteção acabou.
-func (s *PurchaseService) ReleaseDueHolds(ctx context.Context) error {
-	ids, err := s.store.ListDueHolds(ctx, repository.ListDueHoldsParams{Now: s.now(), MaxRows: jobBatchSize})
-	if err != nil {
-		return fmt.Errorf("list due holds: %w", err)
-	}
-	for _, id := range ids {
-		_, err := s.Transition(ctx, id, domain.TxCompleted)
-		logJobErr("release hold", id, err)
-	}
-	return nil
-}
-
 // Se outro processo já avançou a transação, ErrInvalidTransition é esperado.
 func logJobErr(op string, txID int64, err error) {
 	if err != nil && !errors.Is(err, domain.ErrInvalidTransition) {
@@ -537,27 +473,21 @@ func logJobErr(op string, txID int64, err error) {
 
 func toDomainTransaction(t repository.Transaction) domain.Transaction {
 	return domain.Transaction{
-		ID:            t.ID,
-		ListingID:     t.ListingID,
-		BuyerID:       t.BuyerID,
-		SellerID:      t.SellerID,
-		ItemID:        t.ItemID,
-		PriceCents:    t.PriceCents,
-		FeeCents:      t.FeeCents,
-		Status:        domain.TxStatus(t.Status),
-		TradeOfferID:  t.TradeOfferID,
-		HoldUntil:     t.HoldUntil,
-		FailureReason: t.FailureReason,
-		BuyerTradeURL: t.BuyerTradeURL,
-		DeadlineAt:    t.DeadlineAt,
-		CreatedAt:     t.CreatedAt,
-		UpdatedAt:     t.UpdatedAt,
+		ID:             t.ID,
+		ListingID:      t.ListingID,
+		BuyerID:        t.BuyerID,
+		SellerID:       t.SellerID,
+		ItemID:         t.ItemID,
+		PriceCents:     t.PriceCents,
+		FeeCents:       t.FeeCents,
+		Status:         domain.TxStatus(t.Status),
+		TradeOfferID:   t.TradeOfferID,
+		HoldUntil:      t.HoldUntil,
+		FailureReason:  t.FailureReason,
+		BuyerTradeURL:  t.BuyerTradeURL,
+		DeadlineAt:     t.DeadlineAt,
+		LateDeliveryAt: t.LateDeliveryAt,
+		CreatedAt:      t.CreatedAt,
+		UpdatedAt:      t.UpdatedAt,
 	}
-}
-
-func deref(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
 }

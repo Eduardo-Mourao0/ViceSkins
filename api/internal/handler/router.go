@@ -49,6 +49,8 @@ func NewRouter(d Deps) http.Handler {
 		r.Use(RequireAuth(d.Tokens))
 		r.Get("/me", d.Auth.Me)
 		r.Put("/me/trade-url", d.Auth.SetTradeURL)
+		r.Put("/me/steam-api-key", d.Auth.SetSteamAPIKey)
+		r.Delete("/me/steam-api-key", d.Auth.DeleteSteamAPIKey)
 		r.Get("/me/inventory", d.Inventory.List)
 		r.Post("/me/inventory/refresh", d.Inventory.Refresh)
 		r.Get("/me/listings", d.Listings.ListMine)
@@ -64,6 +66,7 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/me/transactions/summary", d.Transactions.Summary)
 		r.Get("/transactions/{id}", d.Transactions.Get)
 		r.Post("/transactions/{id}/cancel", d.Transactions.Cancel)
+		r.Post("/transactions/{id}/sent", d.Transactions.MarkSent)
 	})
 
 	return r

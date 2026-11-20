@@ -58,6 +58,11 @@ services:
       SIM_TRADE_ACCEPT_AFTER: ${SIM_TRADE_ACCEPT_AFTER:-15s}
       SELLER_SEND_TIMEOUT: ${SELLER_SEND_TIMEOUT:-12h}
       BUYER_ACCEPT_TIMEOUT: ${BUYER_ACCEPT_TIMEOUT:-12h}
+      # simulated (padrão) ou steam (P2P real: inventário público + API key opcional do vendedor)
+      TRADE_PROVIDER: ${TRADE_PROVIDER:-simulated}
+      TRADE_CHECK_INTERVAL: ${TRADE_CHECK_INTERVAL:-}
+      # Criptografa as API keys dos vendedores. Valor de dev: troque em produção.
+      SECRETS_KEY: ${SECRETS_KEY:-ZGV2LW9ubHktc2VjcmV0cy1rZXktY2hhbmdlLW1lISE=}
     ports:
       - "8080:8080"
     depends_on:

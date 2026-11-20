@@ -3,7 +3,7 @@ import type { TxStatus } from "@/lib/types";
 export const txStatusInfo: Record<TxStatus, { label: string; hint: string; className: string }> = {
   pending: {
     label: "Processando",
-    hint: "Pagamento confirmado. Preparando a oferta de troca.",
+    hint: "Pagamento confirmado. Aguardando o vendedor enviar a oferta de troca.",
     className: "bg-warning/15 text-warning",
   },
   sent: {

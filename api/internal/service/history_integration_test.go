@@ -6,6 +6,7 @@ import (
 
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/domain"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/service"
+	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/trade"
 )
 
 func TestHistoryVisibilityAndRoles(t *testing.T) {
@@ -101,6 +102,7 @@ func TestHistoryCursorPaginationIsStable(t *testing.T) {
 
 func TestHistoryStatusFilterAndSummary(t *testing.T) {
 	e := setup(t)
+	e.provider.set(func(p *fakeProvider) { p.state = trade.OfferPending }) // ninguém aceitou ainda
 	history := service.NewHistoryService(e.store)
 	seller, buyer := e.user(0), e.user(100_000)
 

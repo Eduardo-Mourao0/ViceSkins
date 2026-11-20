@@ -1,94 +1,75 @@
-// Package trade contém as implementações de envio de ofertas de troca da Steam.
-//
-// No MVP só existe Simulated. A integração real (ex.: um microserviço Node com
-// steam-tradeoffer-manager) entra como outra implementação da mesma interface,
-// sem mudar o service de compra.
 package trade
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
 )
 
-type OfferState string
-
-const (
-	OfferPending  OfferState = "pending"  // enviada, comprador ainda não respondeu
-	OfferAccepted OfferState = "accepted" // comprador aceitou: item trocou de dono
-	OfferDeclined OfferState = "declined" // recusada ou expirada
-)
-
-// ErrRejected é uma falha permanente: tentar de novo não adianta (ex.: trade
-// URL inválida, inventário privado). Qualquer outro erro é tratado como
-// temporário, e o envio é refeito com backoff.
-var ErrRejected = errors.New("trade offer rejected")
-
-// Offer é o que precisa ir para a Steam para montar a oferta de troca.
-type Offer struct {
-	TransactionID int64
-	AssetID       string
-	SellerID      int64
-	BuyerID       int64
-	BuyerTradeURL string // para onde a oferta vai (copiada na compra)
-}
-
-// Simulated finge enviar a oferta e a considera aceita depois de acceptAfter.
-// Guarda as ofertas em memória: depois de reiniciar a API, ofertas desconhecidas
-// são tratadas como aceitas.
+// Simulated finge a Steam: Start "envia" a oferta na hora e o comprador a
+// aceita depois de acceptAfter. Guarda tudo em memória: depois de reiniciar a
+// API, ofertas enviadas e desconhecidas são tratadas como aceitas.
 type Simulated struct {
 	acceptAfter time.Duration
 	now         func() time.Time
 
 	mu        sync.Mutex // map não é seguro para uso concorrente em Go
-	sentAt    map[string]time.Time
-	cancelled map[string]bool // canceladas não podem mais ser "aceitas"
+	sentAt    map[int64]time.Time
+	cancelled map[int64]bool // canceladas não podem mais ser "aceitas"
 }
 
 func NewSimulated(acceptAfter time.Duration) *Simulated {
 	return &Simulated{
 		acceptAfter: acceptAfter,
 		now:         time.Now,
-		sentAt:      map[string]time.Time{},
-		cancelled:   map[string]bool{},
+		sentAt:      map[int64]time.Time{},
+		cancelled:   map[int64]bool{},
 	}
 }
 
-func (s *Simulated) SendOffer(_ context.Context, o Offer) (string, error) {
-	id := fmt.Sprintf("sim-%d", o.TransactionID)
+func offerID(txID int64) string { return fmt.Sprintf("sim-%d", txID) }
+
+func (s *Simulated) Start(_ context.Context, t Trade) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.sentAt[id]; !ok { // idempotente: reenviar não reinicia o relógio
-		s.sentAt[id] = s.now()
+	if _, ok := s.sentAt[t.TransactionID]; !ok { // idempotente: reenviar não reinicia o relógio
+		s.sentAt[t.TransactionID] = s.now()
 	}
-	return id, nil
+	return offerID(t.TransactionID), nil
 }
 
-func (s *Simulated) OfferState(_ context.Context, offerID string) (OfferState, error) {
+func (s *Simulated) Check(_ context.Context, t Trade) (Observation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cancelled[offerID] {
-		return OfferDeclined, nil
+	id := offerID(t.TransactionID)
+	if s.cancelled[t.TransactionID] {
+		return Observation{Offer: OfferDeclined, OfferID: id, Item: ItemWithSeller}, nil
 	}
-	sent, ok := s.sentAt[offerID]
-	if !ok || s.now().Sub(sent) >= s.acceptAfter {
-		return OfferAccepted, nil
+	sent, ok := s.sentAt[t.TransactionID]
+	if !ok {
+		if t.OfferID == "" { // nunca foi enviada (Start falhou)
+			return Observation{Item: ItemWithSeller}, nil
+		}
+		// Enviada antes de a API reiniciar: considera aceita.
+		return Observation{Offer: OfferAccepted, OfferID: t.OfferID, Item: ItemWithBuyer}, nil
 	}
-	return OfferPending, nil
+	if at := sent.Add(s.acceptAfter); !s.now().Before(at) {
+		return Observation{Offer: OfferAccepted, OfferID: id, TradedAt: &at, Item: ItemWithBuyer}, nil
+	}
+	return Observation{Offer: OfferPending, OfferID: id, Item: ItemWithSeller}, nil
 }
 
-// CancelOffer falha se a oferta já foi aceita, como na Steam: troca feita
-// não se cancela.
-func (s *Simulated) CancelOffer(_ context.Context, offerID string) error {
+// Cancel falha se a oferta já foi aceita, como na Steam: troca feita não se
+// cancela.
+func (s *Simulated) Cancel(_ context.Context, t Trade) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sent, ok := s.sentAt[offerID]
-	if ok && s.now().Sub(sent) >= s.acceptAfter {
-		return fmt.Errorf("offer %s already accepted", offerID)
+	sent, ok := s.sentAt[t.TransactionID]
+	if ok && !s.now().Before(sent.Add(s.acceptAfter)) {
+		return fmt.Errorf("offer for transaction %d already accepted", t.TransactionID)
 	}
-	s.cancelled[offerID] = true
-	delete(s.sentAt, offerID)
+	s.cancelled[t.TransactionID] = true
+	delete(s.sentAt, t.TransactionID)
 	return nil
 }

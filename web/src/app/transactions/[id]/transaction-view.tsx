@@ -9,7 +9,7 @@ import { TxProgress, TxStatusBadge, txStatusInfo } from "@/components/tx-status"
 import { Alert, Button, EmptyState, Spinner } from "@/components/ui";
 import { isApiError } from "@/lib/api";
 import { formatDate, formatFloat, formatPrice, timeAgo } from "@/lib/format";
-import { useCancelTransaction, useTransaction } from "@/lib/queries";
+import { useCancelTransaction, useMarkSent, useTransaction } from "@/lib/queries";
 import type { TransactionDetail } from "@/lib/types";
 
 export function TransactionView({ id }: { id: number }) {
@@ -45,6 +45,7 @@ function Detail({ id }: { id: number }) {
 
 function TxDetail({ tx }: { tx: TransactionDetail }) {
   const cancel = useCancelTransaction();
+  const markSent = useMarkSent();
   const buying = tx.role === "buyer";
   const other = buying ? tx.seller : tx.buyer;
   const info = txStatusInfo[tx.status];
@@ -131,10 +132,29 @@ function TxDetail({ tx }: { tx: TransactionDetail }) {
               >
                 {tx.buyerTradeUrl}
               </a>
+              <p className="mt-3 text-xs text-muted">
+                Depois de enviar, avise aqui: o prazo passa a ser do comprador. A entrega é confirmada pelo inventário dele
+                (ou pela sua API key, se cadastrada).
+              </p>
+              {markSent.error && (
+                <div className="mt-2">
+                  <Alert>{markSent.error.message}</Alert>
+                </div>
+              )}
+              <Button className="mt-3" onClick={() => markSent.mutate(tx.id)} loading={markSent.isPending}>
+                Já enviei a oferta
+              </Button>
             </div>
           )}
 
-          {cancel.error && <Alert>{cancel.error.message}</Alert>}
+          {tx.lateDeliveryAt && (
+            <Alert tone="warning">
+              Em análise: o item chegou ao comprador depois de a compra ter sido estornada (
+              {formatDate(tx.lateDeliveryAt)}). A equipe vai revisar esta transação.
+            </Alert>
+          )}
+
+          {cancel.error && <Alert>{cancelError(cancel.error)}</Alert>}
           {canCancel && (
             <Button variant="danger" className="self-start" onClick={() => cancel.mutate(tx.id)} loading={cancel.isPending}>
               Cancelar compra
@@ -215,4 +235,18 @@ function useNow(intervalMs = 30_000) {
     return () => clearInterval(t);
   }, [intervalMs]);
   return now;
+}
+
+// Mensagens da API (inglês) → texto para o usuário.
+function cancelError(err: Error): string {
+  if (isApiError(err, 409) && err.message.includes("already sent")) {
+    return "O vendedor já enviou a oferta de troca. Recuse-a na Steam: a compra é encerrada no fim do prazo e o valor volta para você.";
+  }
+  if (isApiError(err, 503)) {
+    return "Não foi possível confirmar na Steam que o item ainda está com o vendedor. Tente de novo em alguns minutos.";
+  }
+  if (isApiError(err, 409) && err.message.includes("already delivered")) {
+    return "O item já foi entregue: a compra não pode mais ser cancelada.";
+  }
+  return err.message;
 }

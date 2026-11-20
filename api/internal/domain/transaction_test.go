@@ -8,6 +8,7 @@ func TestTxStatusTransitions(t *testing.T) {
 	// Tabela completa: todos os pares (de, para). Só estes podem ser true.
 	valid := map[[2]TxStatus]bool{
 		{TxPending, TxSent}:      true,
+		{TxPending, TxOnHold}:    true,
 		{TxPending, TxCancelled}: true,
 		{TxPending, TxFailed}:    true,
 		{TxSent, TxOnHold}:       true,

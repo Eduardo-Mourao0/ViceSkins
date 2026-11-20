@@ -16,7 +16,9 @@ const (
 // transitions é a máquina de estados inteira: de cada status, para onde pode ir.
 // Status sem entrada (completed, cancelled, failed) são finais.
 var transitions = map[TxStatus][]TxStatus{
-	TxPending: {TxSent, TxCancelled, TxFailed},
+	// pending → on_hold: no P2P o item pode aparecer com o comprador antes de
+	// a oferta ser vista (vendedor sem API key que não marcou o envio).
+	TxPending: {TxSent, TxOnHold, TxCancelled, TxFailed},
 	TxSent:    {TxOnHold, TxCancelled, TxFailed},
 	TxOnHold:  {TxCompleted, TxFailed},
 }
@@ -45,21 +47,22 @@ func CalcFee(priceCents, feeBps int64) int64 {
 }
 
 type Transaction struct {
-	ID            int64
-	ListingID     int64
-	BuyerID       int64
-	SellerID      int64
-	ItemID        int64
-	PriceCents    int64
-	FeeCents      int64
-	Status        TxStatus
-	TradeOfferID  *string
-	HoldUntil     *time.Time
-	FailureReason *string
-	BuyerTradeURL *string    // destino da oferta, copiado na compra
-	DeadlineAt    *time.Time // prazo da etapa atual (só em pending e sent)
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID             int64
+	ListingID      int64
+	BuyerID        int64
+	SellerID       int64
+	ItemID         int64
+	PriceCents     int64
+	FeeCents       int64
+	Status         TxStatus
+	TradeOfferID   *string
+	HoldUntil      *time.Time
+	FailureReason  *string
+	BuyerTradeURL  *string    // destino da oferta, copiado na compra
+	DeadlineAt     *time.Time // prazo da etapa atual (só em pending e sent)
+	LateDeliveryAt *time.Time // item apareceu com o comprador depois do estorno (análise)
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 func (t Transaction) SellerReceivesCents() int64 {

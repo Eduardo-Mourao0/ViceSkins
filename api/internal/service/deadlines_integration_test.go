@@ -44,7 +44,7 @@ func TestTradeURLIsSnapshottedAtPurchase(t *testing.T) {
 	e.dispatch()
 
 	e.provider.mu.Lock()
-	got := e.provider.lastOffer.BuyerTradeURL
+	got := e.provider.lastTrade.BuyerTradeURL
 	e.provider.mu.Unlock()
 	if got != original {
 		t.Fatalf("offer went to %q, want the url at purchase time %q", got, original)
@@ -171,7 +171,7 @@ func TestExpiryIgnoresTransactionsThatMovedOn(t *testing.T) {
 	listingID, _ := e.listing(seller, 5_000)
 
 	tx, _ := e.svc.Buy(e.ctx, buyer, listingID)
-	if err := e.svc.ProcessSentOffers(e.ctx); err != nil { // → on_hold
+	if err := e.svc.WatchTrades(e.ctx); err != nil { // → on_hold
 		t.Fatal(err)
 	}
 	e.expireNow(tx.ID) // prazo antigo vencido, mas a troca já foi aceita
@@ -182,65 +182,110 @@ func TestExpiryIgnoresTransactionsThatMovedOn(t *testing.T) {
 	}
 }
 
-// O comprador aceita a oferta bem quando o prazo vence: o job de ofertas e o
-// de prazos disputam a mesma transação. Só um pode vencer, e o resultado tem
-// que ser coerente: aceita (item com o comprador, sem estorno) ou expirada
-// (estorno, item com o vendedor). Nunca os dois.
+// O comprador aceita a oferta bem quando o prazo vence. O job de prazos olha
+// a Steam (item ainda no vendedor), e no meio da decisão a troca acontece e o
+// job de verificação move a transação para on_hold. Sem a guarda From(status),
+// o estorno decidido com a observação velha seria aplicado em cima de on_hold
+// (on_hold → failed é válido): comprador com item e dinheiro.
+//
+// Roda nos dois modos: com API key (a Steam recusa cancelar oferta aceita) e
+// sem (não há como cancelar; só a guarda protege).
 func TestExpiryRacesWithAcceptance(t *testing.T) {
-	e := setup(t)
-	seller := e.user(0)
+	for _, mode := range []struct {
+		name         string
+		cannotCancel bool
+	}{{"with api key", false}, {"without api key", true}} {
+		t.Run(mode.name, func(t *testing.T) {
+			e := setup(t)
+			seller := e.user(0)
+			e.provider.set(func(p *fakeProvider) { p.cannotCancel = mode.cannotCancel })
 
-	const rounds = 30
-	outcomes := map[domain.TxStatus]int{}
-	for range rounds {
-		buyer := e.user(10_000)
-		listingID, itemID := e.listing(seller, 5_000)
+			const rounds = 30
+			outcomes := map[domain.TxStatus]int{}
+			for range rounds {
+				buyer := e.user(10_000)
+				listingID, itemID := e.listing(seller, 5_000)
 
-		e.provider.set(func(p *fakeProvider) { p.state = trade.OfferPending })
-		tx, _ := e.svc.Buy(e.ctx, buyer, listingID)
-		e.expireNow(tx.ID)
-		e.provider.set(func(p *fakeProvider) { p.state = trade.OfferAccepted })
+				e.provider.set(func(p *fakeProvider) { p.state = trade.OfferPending })
+				tx, _ := e.svc.Buy(e.ctx, buyer, listingID)
+				e.expireNow(tx.ID)
 
-		start := make(chan struct{})
-		var wg sync.WaitGroup
-		for _, job := range []func() error{
-			func() error { return e.svc.ProcessSentOffers(e.ctx) },
-			func() error {
-				// O job de prazos é mais rápido (não consulta a oferta) e venceria
-				// sempre. Um atraso aleatório dá chance aos dois caminhos.
-				time.Sleep(time.Duration(rand.IntN(8000)) * time.Microsecond)
-				return e.svc.ExpireDeadlines(e.ctx)
-			},
-		} {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				<-start
-				if err := job(); err != nil {
-					t.Error(err)
+				start := make(chan struct{})
+				var wg sync.WaitGroup
+				for _, job := range []func() error{
+					func() error {
+						// O comprador aceita em algum momento aleatório e o job vê.
+						time.Sleep(time.Duration(rand.IntN(8000)) * time.Microsecond)
+						e.provider.set(func(p *fakeProvider) { p.state = trade.OfferAccepted })
+						return e.svc.WatchTrades(e.ctx)
+					},
+					func() error { return e.svc.ExpireDeadlines(e.ctx) },
+				} {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						<-start
+						if err := job(); err != nil {
+							t.Error(err)
+						}
+					}()
 				}
-			}()
-		}
-		close(start)
-		wg.Wait()
+				close(start)
+				wg.Wait()
 
-		status := e.status(tx.ID)
-		outcomes[status]++
-		owner := e.scalar(`SELECT owner_id FROM inventory_items WHERE id = $1`, itemID)
-		entries := e.scalar(`SELECT count(*) FROM wallet_entries WHERE transaction_id = $1`, tx.ID)
-		switch status {
-		case domain.TxOnHold:
-			if owner != buyer || e.balance(buyer) != 5_000 || entries != 1 {
-				t.Fatalf("accepted: owner %d, buyer balance %d, entries %d", owner, e.balance(buyer), entries)
+				status := e.status(tx.ID)
+				outcomes[status]++
+				owner := e.scalar(`SELECT owner_id FROM inventory_items WHERE id = $1`, itemID)
+				entries := e.scalar(`SELECT count(*) FROM wallet_entries WHERE transaction_id = $1`, tx.ID)
+				switch status {
+				case domain.TxOnHold: // aceita: item com o comprador, sem estorno
+					if owner != buyer || e.balance(buyer) != 5_000 || entries != 1 {
+						t.Fatalf("accepted: owner %d, buyer balance %d, entries %d", owner, e.balance(buyer), entries)
+					}
+				case domain.TxFailed: // expirou antes do aceite: estorno, item com o vendedor
+					// Passou por on_hold e depois falhou: o estorno da observação velha
+					// foi aplicado em cima de uma troca aceita (o bug da guarda From).
+					if held := e.scalar(`SELECT (hold_until IS NOT NULL)::int FROM transactions WHERE id = $1`, tx.ID); held == 1 {
+						t.Fatal("expiry refunded a trade that had already been accepted (on_hold → failed)")
+					}
+					if owner != seller || e.balance(buyer) != 10_000 || entries != 2 {
+						t.Fatalf("expired: owner %d, buyer balance %d, entries %d", owner, e.balance(buyer), entries)
+					}
+				default:
+					t.Fatalf("status = %s, want on_hold or failed", status)
+				}
+				e.assertLedger(buyer, seller)
 			}
-		case domain.TxFailed:
-			if owner != seller || e.balance(buyer) != 10_000 || entries != 2 {
-				t.Fatalf("expired: owner %d, buyer balance %d, entries %d", owner, e.balance(buyer), entries)
-			}
-		default:
-			t.Fatalf("status = %s, want on_hold or failed", status)
-		}
-		e.assertLedger(buyer, seller)
+			t.Logf("outcomes over %d rounds: %v", rounds, outcomes)
+		})
 	}
-	t.Logf("outcomes over %d rounds: %v", rounds, outcomes)
+}
+
+// Versão determinística da corrida acima: o comprador aceita exatamente entre
+// a consulta do job de prazos (item no vendedor) e a ação dele (estorno).
+func TestExpiryDoesNotRefundTradeAcceptedMidDecision(t *testing.T) {
+	e := setup(t)
+	e.provider.set(func(p *fakeProvider) { p.state, p.cannotCancel = trade.OfferPending, true })
+	seller, buyer := e.user(0), e.user(10_000)
+	listingID, itemID := e.listing(seller, 5_000)
+	tx, _ := e.svc.Buy(e.ctx, buyer, listingID)
+	e.expireNow(tx.ID)
+
+	e.provider.set(func(p *fakeProvider) {
+		p.afterCheck = func() {
+			e.provider.set(func(p *fakeProvider) { p.state = trade.OfferAccepted })
+			if err := e.svc.WatchTrades(e.ctx); err != nil { // → on_hold
+				t.Error(err)
+			}
+		}
+	})
+	e.expire()
+
+	if s := e.status(tx.ID); s != domain.TxOnHold {
+		t.Fatalf("status = %s, want on_hold: a stale observation must not refund an accepted trade", s)
+	}
+	if owner := e.scalar(`SELECT owner_id FROM inventory_items WHERE id = $1`, itemID); owner != buyer || e.balance(buyer) != 5_000 {
+		t.Fatalf("owner %d, buyer balance %d; want item with buyer and no refund", owner, e.balance(buyer))
+	}
+	e.assertLedger(buyer, seller)
 }

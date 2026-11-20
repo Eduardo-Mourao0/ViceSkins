@@ -25,6 +25,8 @@ type AuthService interface {
 	DemoUsers(ctx context.Context) ([]domain.User, error)
 	DemoLogin(ctx context.Context, userID int64) (domain.User, error)
 	SetTradeURL(ctx context.Context, userID int64, raw string) (domain.User, error)
+	SetSteamAPIKey(ctx context.Context, userID int64, raw string) (domain.User, error)
+	DeleteSteamAPIKey(ctx context.Context, userID int64) (domain.User, error)
 }
 
 type AuthHandler struct {
@@ -227,15 +229,62 @@ type userResponse struct {
 	AvatarURL    string  `json:"avatarUrl"`
 	BalanceCents int64   `json:"balanceCents"`
 	TradeURL     *string `json:"tradeUrl"`
+	// A key em si nunca sai da API: só se existe e os 4 últimos caracteres.
+	HasSteamAPIKey   bool    `json:"hasSteamApiKey"`
+	SteamAPIKeyLast4 *string `json:"steamApiKeyLast4"`
 }
 
 func toUserResponse(u domain.User) userResponse {
 	return userResponse{
-		ID:           u.ID,
-		SteamID:      u.SteamID,
-		DisplayName:  u.DisplayName,
-		AvatarURL:    u.AvatarURL,
-		BalanceCents: u.BalanceCents,
-		TradeURL:     u.TradeURL,
+		ID:               u.ID,
+		SteamID:          u.SteamID,
+		DisplayName:      u.DisplayName,
+		AvatarURL:        u.AvatarURL,
+		BalanceCents:     u.BalanceCents,
+		TradeURL:         u.TradeURL,
+		HasSteamAPIKey:   u.HasSteamAPIKey,
+		SteamAPIKeyLast4: u.SteamAPIKeyLast4,
+	}
+}
+
+// PUT /me/steam-api-key {"apiKey": "..."}
+func (h *AuthHandler) SetSteamAPIKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		APIKey string `json:"apiKey"`
+	}
+	if err := readJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	userID, _ := userIDFrom(r.Context())
+	user, err := h.svc.SetSteamAPIKey(r.Context(), userID, req.APIKey)
+	h.writeUserResult(w, user, err)
+}
+
+// DELETE /me/steam-api-key
+func (h *AuthHandler) DeleteSteamAPIKey(w http.ResponseWriter, r *http.Request) {
+	userID, _ := userIDFrom(r.Context())
+	user, err := h.svc.DeleteSteamAPIKey(r.Context(), userID)
+	h.writeUserResult(w, user, err)
+}
+
+func (h *AuthHandler) writeUserResult(w http.ResponseWriter, user domain.User, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, toUserResponse(user))
+	case errors.Is(err, domain.ErrInvalidInput):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, domain.ErrInvalidAPIKey):
+		writeError(w, http.StatusBadRequest, "steam rejected this api key")
+	case errors.Is(err, domain.ErrDemoAccount):
+		writeError(w, http.StatusUnprocessableEntity, "demo accounts are not linked to steam")
+	case errors.Is(err, domain.ErrFeatureDisabled):
+		writeError(w, http.StatusServiceUnavailable, "steam api keys are not enabled on this server")
+	case errors.Is(err, domain.ErrNotFound):
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+	default:
+		// Nunca loga a requisição: ela carrega a key.
+		slog.Error("update user", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
 	}
 }

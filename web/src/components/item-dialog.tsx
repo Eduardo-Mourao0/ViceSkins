@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 import type { InventoryItem } from "@/lib/types";
 import { formatFloat, formatPrice, parsePriceToCents } from "@/lib/format";
@@ -129,7 +130,20 @@ export function ItemDialog({ item, onClose }: { item: InventoryItem; onClose: ()
         )}
 
         {!listing && missingTradeUrl && <TradeURLNotice action="anunciar" />}
-        {mutation.error && <Alert>{mutation.error.message}</Alert>}
+        {mutation.error && (
+          <Alert>
+            {mutation.error.message.includes("without float") ? (
+              <>
+                Itens sem float (caixas, stickers...) só podem ser anunciados com a sua API key da Steam cadastrada.{" "}
+                <Link href="/profile" className="font-semibold underline underline-offset-2">
+                  Cadastrar
+                </Link>
+              </>
+            ) : (
+              mutation.error.message
+            )}
+          </Alert>
+        )}
 
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>

@@ -21,6 +21,7 @@ type fakeListingStore struct {
 	nextID   int64
 
 	noTradeURL bool // vendedor sem trade URL cadastrada
+	hasAPIKey  bool // vendedor com API key da Steam cadastrada
 }
 
 func newFakeListingStore(items ...repository.InventoryItem) *fakeListingStore {
@@ -35,6 +36,9 @@ func (f *fakeListingStore) GetUserByID(_ context.Context, id int64) (repository.
 	u := repository.User{ID: id}
 	if !f.noTradeURL {
 		u.TradeURL = ptr("https://steamcommunity.com/tradeoffer/new/?partner=1&token=abcdefgh")
+	}
+	if f.hasAPIKey {
+		u.SteamAPIKeyEnc = []byte("sealed")
 	}
 	return u, nil
 }
@@ -225,4 +229,35 @@ func TestCreateListingRequiresTradeURL(t *testing.T) {
 	if len(store.listings) != 0 {
 		t.Fatal("no listing must be created")
 	}
+}
+
+func TestFloatlessItemsNeedAPIKeyWithSteamVerification(t *testing.T) {
+	withFloat := tradableItem(1, seller)
+	withFloat.FloatValue = ptr(0.25)
+	caseItem := tradableItem(2, seller) // sem float: caixa, sticker...
+
+	t.Run("simulated: no extra rule", func(t *testing.T) {
+		if _, err := NewListingService(newFakeListingStore(caseItem)).Create(context.Background(), seller, 2, 1500); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("steam: item with float is fine without key", func(t *testing.T) {
+		svc := NewListingService(newFakeListingStore(withFloat), RequireAPIKeyForFloatless())
+		if _, err := svc.Create(context.Background(), seller, 1, 1500); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("steam: item without float needs key", func(t *testing.T) {
+		svc := NewListingService(newFakeListingStore(caseItem), RequireAPIKeyForFloatless())
+		if _, err := svc.Create(context.Background(), seller, 2, 1500); !errors.Is(err, domain.ErrAPIKeyRequired) {
+			t.Fatalf("err = %v, want ErrAPIKeyRequired", err)
+		}
+	})
+	t.Run("steam: item without float with key", func(t *testing.T) {
+		store := newFakeListingStore(caseItem)
+		store.hasAPIKey = true
+		if _, err := NewListingService(store, RequireAPIKeyForFloatless()).Create(context.Background(), seller, 2, 1500); err != nil {
+			t.Fatal(err)
+		}
+	})
 }

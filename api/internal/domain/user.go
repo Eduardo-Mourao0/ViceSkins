@@ -12,7 +12,10 @@ type User struct {
 	AvatarURL    string
 	BalanceCents int64
 	TradeURL     *string // nil até o usuário cadastrar
-	CreatedAt    time.Time
+	// API key da Steam (opcional): só se expõe se existe e os últimos 4 dígitos.
+	HasSteamAPIKey   bool
+	SteamAPIKeyLast4 *string
+	CreatedAt        time.Time
 }
 
 // Contas de demonstração (seed) têm steam_id "demo-*": não existem na Steam.

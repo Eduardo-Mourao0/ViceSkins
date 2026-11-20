@@ -16,6 +16,7 @@ import (
 type PurchaseService interface {
 	Buy(ctx context.Context, buyerID, listingID int64) (domain.Transaction, error)
 	CancelByBuyer(ctx context.Context, buyerID, txID int64) (domain.Transaction, error)
+	MarkSentBySeller(ctx context.Context, sellerID, txID int64) (domain.Transaction, error)
 }
 
 type HistoryService interface {
@@ -65,6 +66,20 @@ func (h *TransactionHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, _ := userIDFrom(r.Context())
 	if _, err := h.svc.CancelByBuyer(r.Context(), userID, txID); err != nil {
+		writeTransactionErr(w, err)
+		return
+	}
+	h.writeDetail(w, r, txID, http.StatusOK)
+}
+
+// POST /transactions/{id}/sent: o vendedor avisa que enviou a oferta
+func (h *TransactionHandler) MarkSent(w http.ResponseWriter, r *http.Request) {
+	txID, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	userID, _ := userIDFrom(r.Context())
+	if _, err := h.svc.MarkSentBySeller(r.Context(), userID, txID); err != nil {
 		writeTransactionErr(w, err)
 		return
 	}
@@ -149,7 +164,7 @@ func writeTransactionErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, domain.ErrForbidden):
-		writeError(w, http.StatusForbidden, "only the buyer can do this")
+		writeError(w, http.StatusForbidden, "your role in this transaction cannot do this")
 	case errors.Is(err, domain.ErrCannotBuyOwnListing):
 		writeError(w, http.StatusUnprocessableEntity, "you cannot buy your own listing")
 	case errors.Is(err, domain.ErrTradeURLRequired):
@@ -160,6 +175,10 @@ func writeTransactionErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "listing is no longer available")
 	case errors.Is(err, domain.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, domain.ErrCannotCancelOffer):
+		writeError(w, http.StatusConflict, "the seller already sent the trade offer: decline it on steam and the purchase ends at the deadline")
+	case errors.Is(err, domain.ErrTradeUnverified):
+		writeError(w, http.StatusServiceUnavailable, "could not confirm on steam that the item is still with the seller; try again in a few minutes")
 	case errors.Is(err, domain.ErrInvalidTransition):
 		writeError(w, http.StatusConflict, err.Error())
 	default:
@@ -182,8 +201,9 @@ type transactionResponse struct {
 	TradeOfferID        *string         `json:"tradeOfferId"`
 	HoldUntil           *time.Time      `json:"holdUntil"`
 	FailureReason       *string         `json:"failureReason"`
-	DeadlineAt          *time.Time      `json:"deadlineAt"`    // prazo da etapa atual (pending/sent)
-	BuyerTradeURL       *string         `json:"buyerTradeUrl"` // só para o vendedor, enquanto precisa enviar
+	DeadlineAt          *time.Time      `json:"deadlineAt"`     // prazo da etapa atual (pending/sent)
+	BuyerTradeURL       *string         `json:"buyerTradeUrl"`  // só para o vendedor, enquanto precisa enviar
+	LateDeliveryAt      *time.Time      `json:"lateDeliveryAt"` // item chegou depois do estorno: em análise
 	CreatedAt           time.Time       `json:"createdAt"`
 	UpdatedAt           time.Time       `json:"updatedAt"`
 }
@@ -209,6 +229,7 @@ func toTransactionResponse(t domain.Transaction, viewerID int64) transactionResp
 		FailureReason:       t.FailureReason,
 		DeadlineAt:          activeDeadline(t),
 		BuyerTradeURL:       tradeURLForViewer(t, viewerID),
+		LateDeliveryAt:      t.LateDeliveryAt,
 		CreatedAt:           t.CreatedAt,
 		UpdatedAt:           t.UpdatedAt,
 	}

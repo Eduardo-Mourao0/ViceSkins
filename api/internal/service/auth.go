@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -20,21 +22,24 @@ type UserRepository interface {
 	GetUserByID(ctx context.Context, id int64) (repository.User, error)
 	ListDemoUsers(ctx context.Context) ([]repository.User, error)
 	SetTradeURL(ctx context.Context, arg repository.SetTradeURLParams) (repository.User, error)
+	SetSteamAPIKey(ctx context.Context, arg repository.SetSteamAPIKeyParams) (repository.User, error)
 }
 
 type SteamAuth interface {
 	LoginURL(state string) string
 	VerifyOpenID(ctx context.Context, q url.Values) (string, error)
 	GetPlayerSummary(ctx context.Context, steamID string) (steam.PlayerSummary, error)
+	ValidateAPIKey(ctx context.Context, apiKey string) error
 }
 
 type AuthService struct {
 	users UserRepository
 	steam SteamAuth
+	keys  KeyBox // nil: cadastro de API key desligado
 }
 
-func NewAuthService(users UserRepository, steam SteamAuth) *AuthService {
-	return &AuthService{users: users, steam: steam}
+func NewAuthService(users UserRepository, steam SteamAuth, keys KeyBox) *AuthService {
+	return &AuthService{users: users, steam: steam, keys: keys}
 }
 
 func (s *AuthService) LoginURL(state string) string {
@@ -122,12 +127,65 @@ func (s *AuthService) SetTradeURL(ctx context.Context, userID int64, raw string)
 
 func toDomainUser(u repository.User) domain.User {
 	return domain.User{
-		ID:           u.ID,
-		SteamID:      u.SteamID,
-		DisplayName:  u.DisplayName,
-		AvatarURL:    u.AvatarURL,
-		BalanceCents: u.BalanceCents,
-		TradeURL:     u.TradeURL,
-		CreatedAt:    u.CreatedAt,
+		ID:               u.ID,
+		SteamID:          u.SteamID,
+		DisplayName:      u.DisplayName,
+		AvatarURL:        u.AvatarURL,
+		BalanceCents:     u.BalanceCents,
+		TradeURL:         u.TradeURL,
+		HasSteamAPIKey:   len(u.SteamAPIKeyEnc) > 0,
+		SteamAPIKeyLast4: u.SteamAPIKeyLast4,
+		CreatedAt:        u.CreatedAt,
 	}
+}
+
+// A Web API key da Steam tem 32 caracteres hexadecimais.
+var apiKeyRe = regexp.MustCompile(`^[0-9A-F]{32}$`)
+
+// SetSteamAPIKey valida a key na própria Steam e a guarda criptografada.
+// Ela nunca volta em nenhuma resposta: só os 4 últimos caracteres.
+func (s *AuthService) SetSteamAPIKey(ctx context.Context, userID int64, raw string) (domain.User, error) {
+	if s.keys == nil {
+		return domain.User{}, domain.ErrFeatureDisabled
+	}
+	u, err := s.GetUser(ctx, userID)
+	if err != nil {
+		return domain.User{}, err
+	}
+	if u.IsDemo() {
+		return domain.User{}, domain.ErrDemoAccount
+	}
+
+	key := strings.ToUpper(strings.TrimSpace(raw))
+	if !apiKeyRe.MatchString(key) {
+		return domain.User{}, fmt.Errorf("%w: steam api key must have 32 hexadecimal characters", domain.ErrInvalidInput)
+	}
+	if err := s.steam.ValidateAPIKey(ctx, key); err != nil {
+		if errors.Is(err, steam.ErrInvalidAPIKey) {
+			return domain.User{}, domain.ErrInvalidAPIKey
+		}
+		return domain.User{}, fmt.Errorf("validate api key: %w", err)
+	}
+
+	sealed, err := s.keys.Seal([]byte(key), apiKeyAAD(userID))
+	if err != nil {
+		return domain.User{}, fmt.Errorf("seal api key: %w", err)
+	}
+	last4 := key[len(key)-4:]
+	row, err := s.users.SetSteamAPIKey(ctx, repository.SetSteamAPIKeyParams{ID: userID, KeyEnc: sealed, KeyLast4: &last4})
+	if err != nil {
+		return domain.User{}, fmt.Errorf("save api key: %w", err)
+	}
+	return toDomainUser(row), nil
+}
+
+func (s *AuthService) DeleteSteamAPIKey(ctx context.Context, userID int64) (domain.User, error) {
+	row, err := s.users.SetSteamAPIKey(ctx, repository.SetSteamAPIKeyParams{ID: userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.User{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.User{}, fmt.Errorf("delete api key: %w", err)
+	}
+	return toDomainUser(row), nil
 }

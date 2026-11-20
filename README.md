@@ -4,7 +4,7 @@ Marketplace de skins de **Counter-Strike 2**, no estilo CSFloat/Skinport. O usu�
 
 Projeto de portfólio com foco no backend: **Go**, **PostgreSQL** e as partes difíceis de um marketplace — compra concorrente sem venda dupla, dinheiro auditável e uma máquina de estados para a entrega.
 
-> Não afiliado à Valve. A entrega dos itens é **simulada**: nenhuma troca real acontece na Steam.
+> Não afiliado à Valve. A entrega é **P2P**: o vendedor envia a oferta pela própria Steam e a plataforma só verifica a troca. Por padrão a verificação é **simulada** (`TRADE_PROVIDER=simulated`); com `TRADE_PROVIDER=steam` ela confere a Steam de verdade.
 
 ---
 
@@ -40,7 +40,7 @@ flowchart LR
     W -->|proxy, mesma origem| A["api<br/>Go"]
     A --> P[(PostgreSQL)]
     A -->|OpenID, Web API,<br/>inventário| S[Steam]
-    A -. TradeProvider .-> T["Entrega<br/>(simulada)"]
+    A -. TradeProvider .-> T["Verificação da troca<br/>(simulada ou Steam)"]
     J["jobs em background<br/>(goroutines)"] --- A
 ```
 
@@ -79,6 +79,7 @@ stateDiagram-v2
     [*] --> pending: compra paga
     pending --> sent: oferta enviada
     sent --> on_hold: comprador aceitou<br/>(item muda de dono, travado)
+    pending --> on_hold: item visto no comprador<br/>(sem a oferta ter sido vista)
     on_hold --> completed: fim da proteção<br/>(vendedor recebe preço − taxa)
     pending --> cancelled
     sent --> cancelled: comprador desistiu
@@ -122,6 +123,14 @@ stateDiagram-v2
 - O vendedor só recebe quando a proteção de troca (7 dias) acaba: até lá a troca pode ser revertida, e o valor aparece como **bloqueado** na carteira, fora do saldo e do ledger. Se a troca for revertida, o comprador é estornado sem precisar tirar dinheiro de ninguém.
 - A trade URL do comprador é **copiada na compra**: trocá-la depois (ex.: conta invadida) não desvia uma entrega em andamento. Só o vendedor a vê, e só enquanto precisa enviar a oferta.
 - Prazos expirados também cancelam a oferta na Steam antes do estorno.
+
+**Verificação híbrida da troca** (`TRADE_PROVIDER=steam`)
+- A plataforma não opera bots: o vendedor envia a oferta pela Steam, e um job verifica a troca.
+- **Inventário (sempre, sem credencial):** o item é localizado no vendedor pelo `asset_id` original e no comprador pela **impressão digital** (nome + float + pattern), porque o `asset_id` muda a cada troca. Validado com um inventário real: 19 itens com float, cada um reconhecido exatamente uma vez.
+- **API key do vendedor (opcional):** com ela, a oferta é acompanhada pela Web API oficial (`IEconService`). Isso dá detecção do envio, **horário real da troca** (a proteção conta a partir dele) e cancelamento automático. A key é validada na Steam, guardada com **AES-256-GCM** (com o id do dono como dado associado, para não poder ser copiada para outra conta) e nunca volta em resposta ou log.
+- **Regras conservadoras:** estorno só com o item comprovadamente no vendedor; entrega só com prova positiva; pagamento só se, no fim da proteção, o item não voltou ao vendedor. Sem resposta da Steam, nada acontece.
+- **Observação velha não vale:** toda ação tomada a partir do que se viu na Steam exige que o status ainda seja o observado (`From(status)`). Isso evita, por exemplo, estornar uma troca que foi aceita entre a consulta e a ação. Há um teste determinístico para essa corrida, validado com mutação.
+- **Entrega tardia:** sem API key, uma oferta pode ficar aberta depois de um estorno por prazo. Se o item aparecer no comprador, a transação é marcada para análise.
 
 **Steam**
 - O inventário fica em cache no banco, e o refresh tem cooldown reservado de forma atômica (`UPDATE ... WHERE refresh_at < cutoff`).
@@ -178,6 +187,9 @@ TRADE_HOLD_DURATION=1m docker compose up -d api
 | `SIM_TRADE_ACCEPT_AFTER` | `15s` | Simulação: tempo até a oferta ser "aceita" |
 | `SELLER_SEND_TIMEOUT` | `12h` | Prazo do vendedor para enviar a oferta; depois, a compra falha e o comprador é estornado |
 | `BUYER_ACCEPT_TIMEOUT` | `12h` | Prazo do comprador para aceitar a oferta; mesma regra |
+| `TRADE_PROVIDER` | `simulated` | `steam` liga a verificação real (inventário público + API key opcional) |
+| `TRADE_CHECK_INTERVAL` | `5s` / `2m` | Intervalo entre verificações de cada troca (simulado / steam) |
+| `SECRETS_KEY` | valor de dev | Chave mestra (base64, 32 bytes) que criptografa as API keys. Obrigatória com `steam` |
 
 ## Testes
 
@@ -209,6 +221,8 @@ O teste de concorrência da compra foi validado com **mutação**. Com o `FOR UP
 | `POST` | `/auth/logout` | | Encerra a sessão |
 | `GET` | `/me` | ✓ | Usuário logado |
 | `PUT` | `/me/trade-url` | ✓ | Cadastra a trade URL (validada: precisa ser da própria conta Steam) |
+| `PUT` | `/me/steam-api-key` · `DELETE` | ✓ | Cadastra (validada na Steam, guardada criptografada) · remove a API key |
+| `POST` | `/transactions/{id}/sent` | ✓ | Vendedor avisa que enviou a oferta |
 | `GET` | `/me/inventory` · `POST /me/inventory/refresh` | ✓ | Inventário em cache · sincronizar com a Steam |
 | `GET` | `/listings` | | Mercado: `q`, `minPrice`, `maxPrice`, `wear`, `minFloat`, `maxFloat`, `sort`, `page` |
 | `GET` | `/listings/{id}` | | Detalhe do anúncio |
@@ -233,7 +247,8 @@ api/
     ├── repository/     código gerado pelo sqlc + transações
     ├── handler/        HTTP (chi), DTOs, middleware de autenticação
     ├── steam/          OpenID, Web API e inventário
-    ├── trade/          TradeProvider simulado
+    ├── trade/          verificação das trocas: simulada e Steam (híbrida)
+    ├── secrets/        AES-GCM para as API keys dos vendedores
     ├── jobs/           tarefas periódicas
     └── testdb/         Postgres descartável para testes
 web/                    Next.js (App Router)
@@ -241,7 +256,9 @@ web/                    Next.js (App Router)
 
 ## Limitações e próximos passos
 
-- **Entrega real:** trocar a implementação simulada do `TradeProvider` por um serviço com `steam-tradeoffer-manager`. Com a simulação, o próximo sync de inventário pode "desfazer" uma troca, já que ela não aconteceu na Steam.
+- **Itens sem float sem API key:** caixas e stickers não têm impressão digital única, então anunciá-los exige a API key. Também não dá para detectar a reversão de um item sem float (ele volta com outro `asset_id`).
+- **Proteção de troca e inventário público:** ainda não confirmei se itens em proteção aparecem no inventário público do comprador. Se não aparecerem, sem API key a entrega só é confirmada no fim da proteção. As regras de estorno já tratam esse caso (nada é estornado com o item fora do vendedor).
+- **Entrega tardia:** é só marcada para análise; falta um fluxo de disputa.
 - **Depósitos reais:** integrar um gateway de pagamento e chaves de idempotência.
 - **Revogação de sessão:** hoje o JWT vale até expirar; sessões no banco permitiriam logout em todos os dispositivos.
 - **Preços de referência:** job buscando preços de mercado para sugerir o valor do anúncio.
