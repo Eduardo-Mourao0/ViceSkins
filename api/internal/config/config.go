@@ -22,6 +22,9 @@ type Config struct {
 	PlatformFeeBps    int64         // taxa da plataforma em basis points (200 = 2%)
 	TradeHoldDuration time.Duration // proteção de troca antes de pagar o vendedor
 	SimAcceptAfter    time.Duration // simulação: tempo até o comprador "aceitar" a troca
+
+	SellerSendTimeout  time.Duration // prazo do vendedor para enviar a oferta
+	BuyerAcceptTimeout time.Duration // prazo do comprador para aceitar a oferta
 }
 
 func Load() (Config, error) {
@@ -55,6 +58,12 @@ func Load() (Config, error) {
 	}
 	if cfg.TradeHoldDuration, err = parseDuration("TRADE_HOLD_DURATION", "168h"); err != nil {
 		errs = append(errs, err)
+	}
+	if cfg.SellerSendTimeout, err = parseDuration("SELLER_SEND_TIMEOUT", "12h"); err != nil || cfg.SellerSendTimeout == 0 {
+		errs = append(errs, errors.New("SELLER_SEND_TIMEOUT must be a positive duration"))
+	}
+	if cfg.BuyerAcceptTimeout, err = parseDuration("BUYER_ACCEPT_TIMEOUT", "12h"); err != nil || cfg.BuyerAcceptTimeout == 0 {
+		errs = append(errs, errors.New("BUYER_ACCEPT_TIMEOUT must be a positive duration"))
 	}
 	if cfg.SimAcceptAfter, err = parseDuration("SIM_TRADE_ACCEPT_AFTER", "15s"); err != nil {
 		errs = append(errs, err)

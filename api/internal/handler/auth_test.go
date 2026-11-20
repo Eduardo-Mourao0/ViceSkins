@@ -180,3 +180,7 @@ func TestDevLogin(t *testing.T) {
 		})
 	}
 }
+
+func (f *fakeAuthService) SetTradeURL(context.Context, int64, string) (domain.User, error) {
+	return domain.User{}, nil
+}

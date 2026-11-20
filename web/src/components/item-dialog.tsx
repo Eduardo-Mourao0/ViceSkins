@@ -4,9 +4,10 @@ import Image from "next/image";
 import { useEffect, useId, useRef, useState } from "react";
 import type { InventoryItem } from "@/lib/types";
 import { formatFloat, formatPrice, parsePriceToCents } from "@/lib/format";
-import { useCancelListing, useCreateListing } from "@/lib/queries";
+import { useCancelListing, useCreateListing, useMe } from "@/lib/queries";
 import { Alert, Button } from "./ui";
 import { FloatBar } from "./float-bar";
+import { TradeURLNotice } from "./trade-url-notice";
 
 const MIN_CENTS = 10;
 const MAX_CENTS = 100_000_000;
@@ -18,6 +19,8 @@ export function ItemDialog({ item, onClose }: { item: InventoryItem; onClose: ()
   const [price, setPrice] = useState("");
   const create = useCreateListing();
   const cancel = useCancelListing();
+  const { data: me } = useMe();
+  const missingTradeUrl = !me?.tradeUrl;
 
   // <dialog> nativo: trava o foco dentro dele e fecha com Esc.
   useEffect(() => {
@@ -125,6 +128,7 @@ export function ItemDialog({ item, onClose }: { item: InventoryItem; onClose: ()
           </div>
         )}
 
+        {!listing && missingTradeUrl && <TradeURLNotice action="anunciar" />}
         {mutation.error && <Alert>{mutation.error.message}</Alert>}
 
         <div className="flex justify-end gap-2">
@@ -136,7 +140,11 @@ export function ItemDialog({ item, onClose }: { item: InventoryItem; onClose: ()
               Cancelar anúncio
             </Button>
           ) : (
-            <Button type="submit" loading={create.isPending} disabled={cents === null || !!priceError}>
+            <Button
+              type="submit"
+              loading={create.isPending}
+              disabled={cents === null || !!priceError || missingTradeUrl}
+            >
               Anunciar
             </Button>
           )}

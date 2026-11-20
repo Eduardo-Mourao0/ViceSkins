@@ -6,6 +6,7 @@ export type User = {
   displayName: string;
   avatarUrl: string;
   balanceCents: number;
+  tradeUrl: string | null; // obrigatória para comprar e anunciar
 };
 
 export type Sticker = {
@@ -56,6 +57,8 @@ export type Transaction = {
   tradeOfferId: string | null;
   holdUntil: string | null;
   failureReason: string | null;
+  deadlineAt: string | null; // prazo da etapa atual (pending/sent)
+  buyerTradeUrl: string | null; // só para o vendedor, enquanto precisa enviar a oferta
   createdAt: string;
   updatedAt: string;
 };
@@ -98,6 +101,9 @@ export type WalletEntry = {
 export type Wallet = {
   balanceCents: number;
   entries: WalletEntry[];
+  lockedCents: number; // vendas em proteção de troca: ainda fora do saldo
+  lockedSales: number;
+  nextReleaseAt: string | null;
 };
 
 /** Dados públicos de um usuário (vendedor, comprador). */

@@ -33,6 +33,7 @@ type PurchaseStore interface {
 	GetInventoryItem(ctx context.Context, id int64) (repository.InventoryItem, error)
 	ListTransactionIDsByStatus(ctx context.Context, arg repository.ListTransactionIDsByStatusParams) ([]int64, error)
 	ListDueHolds(ctx context.Context, arg repository.ListDueHoldsParams) ([]int64, error)
+	ListExpiredTransactions(ctx context.Context, arg repository.ListExpiredTransactionsParams) ([]int64, error)
 	ClaimTradeOutbox(ctx context.Context, arg repository.ClaimTradeOutboxParams) ([]repository.TradeOutbox, error)
 	RescheduleTradeOutbox(ctx context.Context, arg repository.RescheduleTradeOutboxParams) error
 	CloseTradeOutbox(ctx context.Context, arg repository.CloseTradeOutboxParams) error
@@ -42,9 +43,14 @@ type PurchaseConfig struct {
 	FeeBps          int64         // taxa da plataforma em basis points (200 = 2%)
 	HoldDuration    time.Duration // proteção de troca da Steam (7 dias)
 	MaxSendAttempts int           // tentativas de enviar a oferta antes de desistir e estornar
+
+	// Prazos das etapas. Perdeu o prazo → failed, com estorno ao comprador.
+	SellerSendTimeout  time.Duration // pending: vendedor enviar a oferta
+	BuyerAcceptTimeout time.Duration // sent: comprador aceitar
 }
 
 const (
+	defaultStepTimeout     = 12 * time.Hour
 	defaultMaxSendAttempts = 8                // com o backoff abaixo, ~10 min tentando
 	sendTimeout            = 15 * time.Second // limite de uma chamada ao TradeProvider
 	outboxLease            = time.Minute      // > sendTimeout: o lease não vence no meio do envio
@@ -62,6 +68,12 @@ type PurchaseService struct {
 func NewPurchaseService(store PurchaseStore, provider TradeProvider, cfg PurchaseConfig) *PurchaseService {
 	if cfg.MaxSendAttempts <= 0 {
 		cfg.MaxSendAttempts = defaultMaxSendAttempts
+	}
+	if cfg.SellerSendTimeout <= 0 {
+		cfg.SellerSendTimeout = defaultStepTimeout
+	}
+	if cfg.BuyerAcceptTimeout <= 0 {
+		cfg.BuyerAcceptTimeout = defaultStepTimeout
 	}
 	return &PurchaseService{store: store, provider: provider, cfg: cfg, now: time.Now}
 }
@@ -89,14 +101,18 @@ func (s *PurchaseService) Buy(ctx context.Context, buyerID, listingID int64) (do
 		}
 
 		// 2. Trava o saldo do comprador. Duas compras do mesmo comprador ficam em fila.
-		balance, err := q.GetUserBalanceForUpdate(ctx, buyerID)
+		buyer, err := q.GetBuyerForUpdate(ctx, buyerID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ErrNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("lock buyer: %w", err)
 		}
-		if balance < l.PriceCents {
+		// Sem trade URL não há para onde mandar a oferta.
+		if buyer.TradeURL == nil {
+			return domain.ErrTradeURLRequired
+		}
+		if buyer.BalanceCents < l.PriceCents {
 			return domain.ErrInsufficientBalance
 		}
 
@@ -120,6 +136,9 @@ func (s *PurchaseService) Buy(ctx context.Context, buyerID, listingID int64) (do
 			ItemID:     l.ItemID,
 			PriceCents: l.PriceCents,
 			FeeCents:   domain.CalcFee(l.PriceCents, s.cfg.FeeBps),
+			// Cópia da URL: trocar a URL depois não desvia esta entrega.
+			BuyerTradeURL: buyer.TradeURL,
+			DeadlineAt:    s.now().Add(s.cfg.SellerSendTimeout),
 		})
 		if err != nil {
 			return fmt.Errorf("create transaction: %w", err)
@@ -225,6 +244,7 @@ func (s *PurchaseService) dispatch(ctx context.Context, row repository.TradeOutb
 		AssetID:       item.AssetID,
 		SellerID:      tx.SellerID,
 		BuyerID:       tx.BuyerID,
+		BuyerTradeURL: deref(tx.BuyerTradeURL),
 	})
 	cancel()
 
@@ -318,7 +338,11 @@ func (s *PurchaseService) Transition(ctx context.Context, txID int64, to domain.
 			TradeOfferID:  o.offerID,
 			FailureReason: o.reason,
 		}
-		if to == domain.TxOnHold {
+		switch to {
+		case domain.TxSent: // novo prazo: agora é a vez do comprador aceitar
+			deadline := s.now().Add(s.cfg.BuyerAcceptTimeout)
+			params.DeadlineAt = &deadline
+		case domain.TxOnHold:
 			holdUntil := s.now().Add(s.cfg.HoldDuration)
 			params.HoldUntil = &holdUntil
 		}
@@ -397,14 +421,21 @@ func (s *PurchaseService) CancelByBuyer(ctx context.Context, buyerID, txID int64
 	if tx.BuyerID != buyerID {
 		return domain.Transaction{}, domain.ErrNotFound // não revela transações alheias
 	}
-	// Oferta já enviada: cancela na Steam ANTES de estornar. Se cancelar
-	// falhar, o comprador poderia aceitar a troca e ficar com item e dinheiro.
+	return s.abort(ctx, tx, domain.TxCancelled, "cancelada pelo comprador")
+}
+
+// abort encerra uma transação em andamento (→ cancelled ou failed, com estorno).
+//
+// Se a oferta já foi enviada, ela é cancelada na Steam ANTES do estorno. Se o
+// cancelamento falhar, nada muda: senão o comprador poderia aceitar a troca
+// e ficar com o item e o dinheiro.
+func (s *PurchaseService) abort(ctx context.Context, tx repository.Transaction, to domain.TxStatus, reason string) (domain.Transaction, error) {
 	if domain.TxStatus(tx.Status) == domain.TxSent && tx.TradeOfferID != nil {
 		if err := s.provider.CancelOffer(ctx, *tx.TradeOfferID); err != nil {
 			return domain.Transaction{}, fmt.Errorf("cancel trade offer: %w", err)
 		}
 	}
-	return s.Transition(ctx, txID, domain.TxCancelled, Reason("cancelada pelo comprador"))
+	return s.Transition(ctx, tx.ID, to, Reason(reason))
 }
 
 // GetForUser devolve a transação se o usuário for o comprador ou o vendedor.
@@ -457,6 +488,33 @@ func (s *PurchaseService) ProcessSentOffers(ctx context.Context) error {
 	return nil
 }
 
+// ExpireDeadlines encerra as transações que perderam o prazo da etapa atual:
+// vendedor não enviou a oferta (pending) ou comprador não aceitou (sent).
+// O comprador é estornado. Se cancelar a oferta na Steam falhar, a transação
+// fica como está e é tentada de novo no próximo tick.
+func (s *PurchaseService) ExpireDeadlines(ctx context.Context) error {
+	ids, err := s.store.ListExpiredTransactions(ctx, repository.ListExpiredTransactionsParams{
+		Now: s.now(), MaxRows: jobBatchSize,
+	})
+	if err != nil {
+		return fmt.Errorf("list expired transactions: %w", err)
+	}
+	for _, id := range ids {
+		tx, err := s.store.GetTransaction(ctx, id)
+		if err != nil {
+			slog.Error("expire: get transaction", "tx", id, "err", err)
+			continue
+		}
+		reason := "o vendedor não enviou a oferta de troca no prazo"
+		if domain.TxStatus(tx.Status) == domain.TxSent {
+			reason = "o comprador não aceitou a oferta de troca no prazo"
+		}
+		_, err = s.abort(ctx, tx, domain.TxFailed, reason)
+		logJobErr("expire transaction", id, err)
+	}
+	return nil
+}
+
 // ReleaseDueHolds conclui as transações cujo período de proteção acabou.
 func (s *PurchaseService) ReleaseDueHolds(ctx context.Context) error {
 	ids, err := s.store.ListDueHolds(ctx, repository.ListDueHoldsParams{Now: s.now(), MaxRows: jobBatchSize})
@@ -490,7 +548,16 @@ func toDomainTransaction(t repository.Transaction) domain.Transaction {
 		TradeOfferID:  t.TradeOfferID,
 		HoldUntil:     t.HoldUntil,
 		FailureReason: t.FailureReason,
+		BuyerTradeURL: t.BuyerTradeURL,
+		DeadlineAt:    t.DeadlineAt,
 		CreatedAt:     t.CreatedAt,
 		UpdatedAt:     t.UpdatedAt,
 	}
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

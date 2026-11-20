@@ -33,4 +33,10 @@ type WalletEntry struct {
 type Wallet struct {
 	BalanceCents int64
 	Entries      []WalletEntry
+
+	// Vendas em proteção de troca: valor reservado ao vendedor que só entra
+	// no saldo quando a proteção acaba (não está em BalanceCents).
+	LockedCents   int64
+	LockedSales   int64
+	NextReleaseAt *time.Time
 }

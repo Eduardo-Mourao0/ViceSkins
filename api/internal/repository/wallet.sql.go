@@ -7,6 +7,7 @@ package repository
 
 import (
 	"context"
+	"time"
 )
 
 const addToBalance = `-- name: AddToBalance :one
@@ -29,6 +30,41 @@ func (q *Queries) AddToBalance(ctx context.Context, arg AddToBalanceParams) (int
 	var balance_cents int64
 	err := row.Scan(&balance_cents)
 	return balance_cents, err
+}
+
+const getLockedSaleEarnings = `-- name: GetLockedSaleEarnings :one
+SELECT COALESCE(SUM(price_cents - fee_cents), 0)::bigint AS locked_cents,
+       COUNT(*)                                          AS locked_sales
+FROM transactions
+WHERE seller_id = $1 AND status = 'on_hold'
+`
+
+type GetLockedSaleEarningsRow struct {
+	LockedCents int64
+	LockedSales int64
+}
+
+// Vendas em proteção de troca: o valor já está reservado para o vendedor,
+// mas só entra no saldo (e no ledger) quando a proteção acaba.
+func (q *Queries) GetLockedSaleEarnings(ctx context.Context, sellerID int64) (GetLockedSaleEarningsRow, error) {
+	row := q.db.QueryRow(ctx, getLockedSaleEarnings, sellerID)
+	var i GetLockedSaleEarningsRow
+	err := row.Scan(&i.LockedCents, &i.LockedSales)
+	return i, err
+}
+
+const getNextHoldRelease = `-- name: GetNextHoldRelease :one
+SELECT hold_until FROM transactions
+WHERE seller_id = $1 AND status = 'on_hold'
+ORDER BY hold_until
+LIMIT 1
+`
+
+func (q *Queries) GetNextHoldRelease(ctx context.Context, sellerID int64) (*time.Time, error) {
+	row := q.db.QueryRow(ctx, getNextHoldRelease, sellerID)
+	var hold_until *time.Time
+	err := row.Scan(&hold_until)
+	return hold_until, err
 }
 
 const getWalletAudit = `-- name: GetWalletAudit :one

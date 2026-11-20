@@ -264,3 +264,12 @@ export function useTxSummary() {
     queryFn: () => api<TxSummary>("/me/transactions/summary"),
   });
 }
+
+export function useSetTradeURL() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (tradeUrl: string) =>
+      api<User>("/me/trade-url", { method: "PUT", body: JSON.stringify({ tradeUrl }) }),
+    onSuccess: (me) => qc.setQueryData(keys.me, me),
+  });
+}

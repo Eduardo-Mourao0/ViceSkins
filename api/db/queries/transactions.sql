@@ -7,8 +7,8 @@ SELECT * FROM listings
 WHERE id = $1
 FOR UPDATE;
 
--- name: GetUserBalanceForUpdate :one
-SELECT balance_cents FROM users
+-- name: GetBuyerForUpdate :one
+SELECT balance_cents, trade_url FROM users
 WHERE id = $1
 FOR UPDATE;
 
@@ -23,8 +23,8 @@ SET status = 'cancelled', updated_at = now()
 WHERE id = $1;
 
 -- name: CreateTransaction :one
-INSERT INTO transactions (listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO transactions (listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, buyer_trade_url, deadline_at)
+VALUES (@listing_id, @buyer_id, @seller_id, @item_id, @price_cents, @fee_cents, @buyer_trade_url, @deadline_at::timestamptz)
 RETURNING *;
 
 -- ===== Máquina de estados =====
@@ -46,6 +46,7 @@ SET status         = @to_status,
     trade_offer_id = COALESCE(sqlc.narg(trade_offer_id), trade_offer_id),
     hold_until     = COALESCE(sqlc.narg(hold_until), hold_until),
     failure_reason = COALESCE(sqlc.narg(failure_reason), failure_reason),
+    deadline_at    = COALESCE(sqlc.narg(deadline_at), deadline_at),
     updated_at     = now()
 WHERE id = @id AND status = @from_status
 RETURNING *;
@@ -79,6 +80,13 @@ LIMIT @max_rows;
 SELECT id FROM transactions
 WHERE status = 'on_hold' AND hold_until <= @now::timestamptz
 ORDER BY hold_until
+LIMIT @max_rows;
+
+-- Transações que perderam o prazo da etapa atual.
+-- name: ListExpiredTransactions :many
+SELECT id FROM transactions
+WHERE status IN ('pending', 'sent') AND deadline_at <= @now::timestamptz
+ORDER BY deadline_at
 LIMIT @max_rows;
 
 -- ===== Histórico =====

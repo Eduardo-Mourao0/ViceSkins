@@ -66,6 +66,8 @@ type Transaction struct {
 	FailureReason *string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	BuyerTradeURL *string
+	DeadlineAt    *time.Time
 }
 
 type User struct {
@@ -78,6 +80,7 @@ type User struct {
 	UpdatedAt          time.Time
 	InventoryRefreshAt *time.Time
 	InventorySyncedAt  *time.Time
+	TradeURL           *string
 }
 
 type WalletEntry struct {

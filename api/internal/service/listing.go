@@ -14,6 +14,7 @@ import (
 const constraintOneActivePerItem = "listings_one_active_per_item"
 
 type ListingStore interface {
+	GetUserByID(ctx context.Context, id int64) (repository.User, error)
 	GetInventoryItem(ctx context.Context, id int64) (repository.InventoryItem, error)
 	CreateListing(ctx context.Context, arg repository.CreateListingParams) (repository.Listing, error)
 	GetListing(ctx context.Context, id int64) (repository.Listing, error)
@@ -34,6 +35,19 @@ func (s *ListingService) Create(ctx context.Context, sellerID, itemID, priceCent
 	if priceCents < domain.MinListingPriceCents || priceCents > domain.MaxListingPriceCents {
 		return domain.Listing{}, fmt.Errorf("%w: price must be between %d and %d cents",
 			domain.ErrInvalidInput, domain.MinListingPriceCents, domain.MaxListingPriceCents)
+	}
+
+	// Sem trade URL o vendedor não recebe devoluções, e o comprador não tem
+	// como confirmar a conta dele: anunciar exige a URL cadastrada.
+	u, err := s.store.GetUserByID(ctx, sellerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Listing{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.Listing{}, fmt.Errorf("get seller: %w", err)
+	}
+	if u.TradeURL == nil {
+		return domain.Listing{}, domain.ErrTradeURLRequired
 	}
 
 	item, err := s.store.GetInventoryItem(ctx, itemID)

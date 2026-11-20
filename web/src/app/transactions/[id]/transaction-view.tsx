@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { FloatBar } from "@/components/float-bar";
 import { RequireLogin } from "@/components/require-login";
 import { TxProgress, TxStatusBadge, txStatusInfo } from "@/components/tx-status";
@@ -107,9 +108,31 @@ function TxDetail({ tx }: { tx: TransactionDetail }) {
               {tx.failureReason && <span className="text-faint"> ({tx.failureReason})</span>}
             </p>
             {tx.status === "on_hold" && tx.holdUntil && (
-              <p className="text-xs text-pink-soft">Proteção termina {timeAgo(tx.holdUntil)}.</p>
+              <p className="text-xs text-pink-soft">
+                Proteção termina {timeAgo(tx.holdUntil)} ({formatDate(tx.holdUntil)}).
+                {!buying && " O valor fica bloqueado até lá."}
+              </p>
             )}
+            {tx.deadlineAt && <Deadline tx={tx} buying={buying} deadlineAt={tx.deadlineAt} />}
           </div>
+
+          {/* P2P: o vendedor envia a oferta para a trade URL do comprador. */}
+          {tx.buyerTradeUrl && (
+            <div className="rounded-lg border border-cyan/40 bg-cyan/5 p-4 text-sm">
+              <p className="font-semibold">Envie o item para o comprador</p>
+              <p className="mt-1 text-muted">
+                Crie a oferta de troca na Steam por esta trade URL, só com este item e sem pedir nada em troca.
+              </p>
+              <a
+                href={tx.buyerTradeUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 block truncate font-mono text-xs text-cyan-soft hover:underline"
+              >
+                {tx.buyerTradeUrl}
+              </a>
+            </div>
+          )}
 
           {cancel.error && <Alert>{cancel.error.message}</Alert>}
           {canCancel && (
@@ -165,4 +188,31 @@ function TxDetail({ tx }: { tx: TransactionDetail }) {
       </div>
     </div>
   );
+}
+
+/** Prazo da etapa atual: perdeu, a compra é cancelada e o comprador estornado. */
+function Deadline({ tx, buying, deadlineAt }: { tx: TransactionDetail; buying: boolean; deadlineAt: string }) {
+  const sellerTurn = tx.status === "pending";
+  const myTurn = sellerTurn !== buying; // pending: vez do vendedor; sent: vez do comprador
+  const who = myTurn ? "Você tem" : sellerTurn ? "O vendedor tem" : "O comprador tem";
+  const what = sellerTurn ? "enviar a oferta de troca" : "aceitar a oferta de troca";
+  const late = new Date(deadlineAt).getTime() <= useNow();
+
+  return (
+    <p className={`text-xs ${myTurn ? "text-warning" : "text-faint"}`}>
+      {late
+        ? "O prazo terminou. A compra será cancelada e o valor devolvido ao comprador."
+        : `${who} até ${formatDate(deadlineAt)} (${timeAgo(deadlineAt)}) para ${what}. Depois disso, a compra é cancelada e o valor volta para o comprador.`}
+    </p>
+  );
+}
+
+/** Hora atual em estado, atualizada a cada 30s: o render continua puro. */
+function useNow(intervalMs = 30_000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(t);
+  }, [intervalMs]);
+  return now;
 }

@@ -19,6 +19,7 @@ type UserRepository interface {
 	UpsertUserBySteamID(ctx context.Context, arg repository.UpsertUserBySteamIDParams) (repository.User, error)
 	GetUserByID(ctx context.Context, id int64) (repository.User, error)
 	ListDemoUsers(ctx context.Context) ([]repository.User, error)
+	SetTradeURL(ctx context.Context, arg repository.SetTradeURLParams) (repository.User, error)
 }
 
 type SteamAuth interface {
@@ -102,6 +103,23 @@ func (s *AuthService) DemoLogin(ctx context.Context, userID int64) (domain.User,
 	return u, nil
 }
 
+// SetTradeURL valida e salva a trade URL do usuário (forma canônica).
+func (s *AuthService) SetTradeURL(ctx context.Context, userID int64, raw string) (domain.User, error) {
+	u, err := s.GetUser(ctx, userID)
+	if err != nil {
+		return domain.User{}, err
+	}
+	normalized, err := domain.NormalizeTradeURL(raw, u)
+	if err != nil {
+		return domain.User{}, err
+	}
+	row, err := s.users.SetTradeURL(ctx, repository.SetTradeURLParams{ID: userID, TradeURL: &normalized})
+	if err != nil {
+		return domain.User{}, fmt.Errorf("set trade url: %w", err)
+	}
+	return toDomainUser(row), nil
+}
+
 func toDomainUser(u repository.User) domain.User {
 	return domain.User{
 		ID:           u.ID,
@@ -109,6 +127,7 @@ func toDomainUser(u repository.User) domain.User {
 		DisplayName:  u.DisplayName,
 		AvatarURL:    u.AvatarURL,
 		BalanceCents: u.BalanceCents,
+		TradeURL:     u.TradeURL,
 		CreatedAt:    u.CreatedAt,
 	}
 }

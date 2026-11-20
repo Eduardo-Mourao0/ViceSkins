@@ -21,4 +21,6 @@ var (
 	ErrInsufficientBalance = errors.New("insufficient balance")
 	ErrCannotBuyOwnListing = errors.New("cannot buy your own listing")
 	ErrInvalidTransition   = errors.New("invalid transaction status transition")
+
+	ErrTradeURLRequired = errors.New("trade url required")
 )

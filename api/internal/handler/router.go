@@ -48,6 +48,7 @@ func NewRouter(d Deps) http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(RequireAuth(d.Tokens))
 		r.Get("/me", d.Auth.Me)
+		r.Put("/me/trade-url", d.Auth.SetTradeURL)
 		r.Get("/me/inventory", d.Inventory.List)
 		r.Post("/me/inventory/refresh", d.Inventory.Refresh)
 		r.Get("/me/listings", d.Listings.ListMine)

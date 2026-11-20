@@ -24,6 +24,7 @@ type AuthService interface {
 	GetUser(ctx context.Context, id int64) (domain.User, error)
 	DemoUsers(ctx context.Context) ([]domain.User, error)
 	DemoLogin(ctx context.Context, userID int64) (domain.User, error)
+	SetTradeURL(ctx context.Context, userID int64, raw string) (domain.User, error)
 }
 
 type AuthHandler struct {
@@ -172,6 +173,32 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toUserResponse(user))
 }
 
+// PUT /me/trade-url {"tradeUrl": "https://steamcommunity.com/tradeoffer/new/?..."}
+func (h *AuthHandler) SetTradeURL(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TradeURL string `json:"tradeUrl"`
+	}
+	if err := readJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	userID, _ := userIDFrom(r.Context())
+	user, err := h.svc.SetTradeURL(r.Context(), userID, req.TradeURL)
+	switch {
+	case errors.Is(err, domain.ErrInvalidInput):
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case errors.Is(err, domain.ErrNotFound):
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	case err != nil:
+		slog.Error("set trade url", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, toUserResponse(user))
+}
+
 func (h *AuthHandler) clearCookie(w http.ResponseWriter, name, path string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
@@ -194,11 +221,12 @@ func randomToken() (string, error) {
 
 // DTO de saída. steamId vai como string: SteamID64 passa do limite de inteiro seguro do JS.
 type userResponse struct {
-	ID           int64  `json:"id"`
-	SteamID      string `json:"steamId"`
-	DisplayName  string `json:"displayName"`
-	AvatarURL    string `json:"avatarUrl"`
-	BalanceCents int64  `json:"balanceCents"`
+	ID           int64   `json:"id"`
+	SteamID      string  `json:"steamId"`
+	DisplayName  string  `json:"displayName"`
+	AvatarURL    string  `json:"avatarUrl"`
+	BalanceCents int64   `json:"balanceCents"`
+	TradeURL     *string `json:"tradeUrl"`
 }
 
 func toUserResponse(u domain.User) userResponse {
@@ -208,5 +236,6 @@ func toUserResponse(u domain.User) userResponse {
 		DisplayName:  u.DisplayName,
 		AvatarURL:    u.AvatarURL,
 		BalanceCents: u.BalanceCents,
+		TradeURL:     u.TradeURL,
 	}
 }

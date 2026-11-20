@@ -8,6 +8,7 @@ import { formatDate, formatFloat, formatPrice } from "@/lib/format";
 import { useBuy, useCancelTransaction, useMe, useTransaction } from "@/lib/queries";
 import type { MarketListing } from "@/lib/types";
 import { FloatBar } from "./float-bar";
+import { TradeURLNotice } from "./trade-url-notice";
 import { TxProgress, TxStatusBadge, txStatusInfo } from "./tx-status";
 import { Alert, Button, SteamLoginButton } from "./ui";
 
@@ -98,7 +99,7 @@ export function ListingDialog({ listing, onClose }: { listing: MarketListing; on
               <Button disabled>Seu anúncio</Button>
             </div>
           ) : (
-            <BuyFlow listing={listing} balanceCents={me.balanceCents} onClose={onClose} />
+            <BuyFlow listing={listing} balanceCents={me.balanceCents} hasTradeUrl={!!me.tradeUrl} onClose={onClose} />
           )}
         </div>
       </div>
@@ -114,10 +115,12 @@ function Price({ cents }: { cents: number }) {
 function BuyFlow({
   listing,
   balanceCents,
+  hasTradeUrl,
   onClose,
 }: {
   listing: MarketListing;
   balanceCents: number;
+  hasTradeUrl: boolean;
   onClose: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -170,13 +173,15 @@ function BuyFlow({
       <div className="flex items-center justify-between gap-4">
         <Price cents={listing.priceCents} />
         {!confirming && (
-          <Button onClick={() => setConfirming(true)} disabled={insufficient}>
+          <Button onClick={() => setConfirming(true)} disabled={insufficient || !hasTradeUrl}>
             Comprar
           </Button>
         )}
       </div>
 
-      {insufficient && (
+      {!hasTradeUrl && <TradeURLNotice action="comprar" />}
+
+      {hasTradeUrl && insufficient && (
         <Alert tone="warning">
           Seu saldo é {formatPrice(balanceCents)}.{" "}
           <Link href="/wallet" className="underline underline-offset-2">

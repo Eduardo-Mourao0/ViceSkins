@@ -14,9 +14,11 @@ Projeto de portfólio com foco no backend: **Go**, **PostgreSQL** e as partes di
 - **Inventário de CS2** importado da Steam, com float, pattern, stickers e chaveiros, em cache com cooldown
 - **Anúncios**: criar e cancelar, com validação de dono, item negociável e preço
 - **Mercado público** com busca por nome, faixa de preço, desgaste (FN–BS), faixa de float, ordenação e paginação
-- **Carteira** com depósito simulado e extrato; o saldo é um ledger auditável
+- **Carteira** com depósito simulado e extrato; o saldo é um ledger auditável. O valor das vendas fica **bloqueado** até o fim da proteção de troca da Steam
+- **Trade URL** obrigatória para comprar e anunciar, validada contra a conta Steam do usuário
 - **Compra atômica**: dois compradores no mesmo item ao mesmo tempo → exatamente um leva
 - **Entrega simulada** com máquina de estados `pending → sent → on_hold → completed`, estorno automático em falhas e pagamento ao vendedor só depois da proteção de troca
+- **Prazos** por etapa: vendedor que não envia ou comprador que não aceita a tempo → compra cancelada e estornada
 - **Histórico** de compras e vendas com resumo e acompanhamento ao vivo
 - **Modo demonstração**: seed com usuários e anúncios, e login sem Steam para testar tudo localmente
 
@@ -116,6 +118,11 @@ stateDiagram-v2
 - A máquina de estados é um mapa único no domínio.
 - O `UPDATE` de status inclui `WHERE status = <anterior>`: dois workers concluindo a mesma transação pagam o vendedor uma vez só.
 
+**Proteção de troca e P2P**
+- O vendedor só recebe quando a proteção de troca (7 dias) acaba: até lá a troca pode ser revertida, e o valor aparece como **bloqueado** na carteira, fora do saldo e do ledger. Se a troca for revertida, o comprador é estornado sem precisar tirar dinheiro de ninguém.
+- A trade URL do comprador é **copiada na compra**: trocá-la depois (ex.: conta invadida) não desvia uma entrega em andamento. Só o vendedor a vê, e só enquanto precisa enviar a oferta.
+- Prazos expirados também cancelam a oferta na Steam antes do estorno.
+
 **Steam**
 - O inventário fica em cache no banco, e o refresh tem cooldown reservado de forma atômica (`UPDATE ... WHERE refresh_at < cutoff`).
 - O login valida a asserção OpenID com a própria Steam (`check_authentication`) e usa um `state` contra login CSRF.
@@ -169,6 +176,8 @@ TRADE_HOLD_DURATION=1m docker compose up -d api
 | `PLATFORM_FEE_BPS` | `200` | Taxa da plataforma (200 = 2%) |
 | `TRADE_HOLD_DURATION` | `168h` | Proteção de troca antes de pagar o vendedor |
 | `SIM_TRADE_ACCEPT_AFTER` | `15s` | Simulação: tempo até a oferta ser "aceita" |
+| `SELLER_SEND_TIMEOUT` | `12h` | Prazo do vendedor para enviar a oferta; depois, a compra falha e o comprador é estornado |
+| `BUYER_ACCEPT_TIMEOUT` | `12h` | Prazo do comprador para aceitar a oferta; mesma regra |
 
 ## Testes
 
@@ -183,6 +192,7 @@ Os testes de integração rodam contra **PostgreSQL real** (testcontainers) e co
 - 15 rodadas de **20 compradores simultâneos** na mesma listing → sempre exatamente 1 vence, e os outros não são cobrados
 - o mesmo comprador fazendo compras simultâneas além do saldo → só as que cabem passam
 - **10 workers concluindo a mesma transação** → o vendedor é pago uma única vez
+- **job de prazos e aceite da oferta disputando a mesma transação** → só um vence, e o resultado é coerente (item entregue sem estorno, ou estorno com o item de volta)
 - **10 workers despachando o outbox** ao mesmo tempo → a oferta sai uma vez só; lease vencido é retomado; retry com backoff e desistência com estorno
 - 50 depósitos simultâneos → nenhuma atualização de saldo perdida
 - o ciclo completo, estornos, reversão durante a proteção e transições inválidas
@@ -198,6 +208,7 @@ O teste de concorrência da compra foi validado com **mutação**. Com o `FOR UP
 | `GET` | `/auth/steam/login` · `/auth/steam/callback` | | Login com Steam |
 | `POST` | `/auth/logout` | | Encerra a sessão |
 | `GET` | `/me` | ✓ | Usuário logado |
+| `PUT` | `/me/trade-url` | ✓ | Cadastra a trade URL (validada: precisa ser da própria conta Steam) |
 | `GET` | `/me/inventory` · `POST /me/inventory/refresh` | ✓ | Inventário em cache · sincronizar com a Steam |
 | `GET` | `/listings` | | Mercado: `q`, `minPrice`, `maxPrice`, `wear`, `minFloat`, `maxFloat`, `sort`, `page` |
 | `GET` | `/listings/{id}` | | Detalhe do anúncio |

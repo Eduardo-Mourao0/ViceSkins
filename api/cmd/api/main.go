@@ -68,8 +68,10 @@ func run() error {
 	inventorySvc := service.NewInventoryService(store, steamClient, 5*time.Minute)
 	listingSvc := service.NewListingService(store)
 	purchaseSvc := service.NewPurchaseService(store, trade.NewSimulated(cfg.SimAcceptAfter), service.PurchaseConfig{
-		FeeBps:       cfg.PlatformFeeBps,
-		HoldDuration: cfg.TradeHoldDuration,
+		FeeBps:             cfg.PlatformFeeBps,
+		HoldDuration:       cfg.TradeHoldDuration,
+		SellerSendTimeout:  cfg.SellerSendTimeout,
+		BuyerAcceptTimeout: cfg.BuyerAcceptTimeout,
 	})
 
 	// Jobs em background. Ao sair de run(), os defers rodam em ordem inversa:
@@ -83,6 +85,7 @@ func run() error {
 	jobs.Every(jobsCtx, &jobsWG, "trade-outbox", 3*time.Second, purchaseSvc.DispatchPendingOffers)
 	jobs.Every(jobsCtx, &jobsWG, "trade-offers", 5*time.Second, purchaseSvc.ProcessSentOffers)
 	jobs.Every(jobsCtx, &jobsWG, "hold-release", 30*time.Second, purchaseSvc.ReleaseDueHolds)
+	jobs.Every(jobsCtx, &jobsWG, "expire-deadlines", 30*time.Second, purchaseSvc.ExpireDeadlines)
 
 	router := handler.NewRouter(handler.Deps{
 		DB:           pool,

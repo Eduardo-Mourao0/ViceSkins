@@ -35,6 +35,19 @@ function WalletView() {
           <p className="mt-1 text-4xl font-bold text-neon-cyan tabular-nums">
             {wallet ? formatPrice(wallet.balanceCents) : "—"}
           </p>
+          {wallet && wallet.lockedSales > 0 && (
+            <div className="relative mt-5 border-t border-line pt-4">
+              <p className="text-xs tracking-wider text-faint uppercase">Bloqueado</p>
+              <p className="mt-0.5 text-xl font-semibold text-pink-soft tabular-nums">
+                {formatPrice(wallet.lockedCents)}
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                {wallet.lockedSales === 1 ? "1 venda" : `${wallet.lockedSales} vendas`} em proteção de troca. O valor
+                entra no saldo quando a Steam não permitir mais reverter a troca
+                {wallet.nextReleaseAt && <> (próxima liberação em {formatDate(wallet.nextReleaseAt)})</>}.
+              </p>
+            </div>
+          )}
         </section>
         <DepositForm />
       </div>

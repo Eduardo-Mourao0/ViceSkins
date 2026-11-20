@@ -96,6 +96,8 @@ func writeListingErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, domain.ErrForbidden):
 		writeError(w, http.StatusForbidden, "this listing is not yours")
+	case errors.Is(err, domain.ErrTradeURLRequired):
+		writeError(w, http.StatusUnprocessableEntity, "set your steam trade url before listing items")
 	case errors.Is(err, domain.ErrItemNotTradable):
 		writeError(w, http.StatusUnprocessableEntity, "item is not tradable")
 	case errors.Is(err, domain.ErrItemAlreadyListed):

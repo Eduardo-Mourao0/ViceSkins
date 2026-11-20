@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -15,6 +16,8 @@ type WalletStore interface {
 	GetUserByID(ctx context.Context, id int64) (repository.User, error)
 	Deposit(ctx context.Context, userID, amountCents int64, description string) (repository.WalletEntry, error)
 	ListWalletEntries(ctx context.Context, arg repository.ListWalletEntriesParams) ([]repository.WalletEntry, error)
+	GetLockedSaleEarnings(ctx context.Context, sellerID int64) (repository.GetLockedSaleEarningsRow, error)
+	GetNextHoldRelease(ctx context.Context, sellerID int64) (*time.Time, error)
 }
 
 type WalletService struct {
@@ -42,7 +45,8 @@ func (s *WalletService) Deposit(ctx context.Context, userID, amountCents int64) 
 	return toDomainEntry(e), nil
 }
 
-// Wallet devolve o saldo e as últimas movimentações.
+// Wallet devolve o saldo, as últimas movimentações e o valor bloqueado em
+// vendas que ainda estão na proteção de troca.
 func (s *WalletService) Wallet(ctx context.Context, userID int64, limit int) (domain.Wallet, error) {
 	if limit < 1 || limit > 200 {
 		limit = 50
@@ -63,7 +67,19 @@ func (s *WalletService) Wallet(ctx context.Context, userID int64, limit int) (do
 	for _, r := range rows {
 		entries = append(entries, toDomainEntry(r))
 	}
-	return domain.Wallet{BalanceCents: u.BalanceCents, Entries: entries}, nil
+	w := domain.Wallet{BalanceCents: u.BalanceCents, Entries: entries}
+
+	locked, err := s.store.GetLockedSaleEarnings(ctx, userID)
+	if err != nil {
+		return domain.Wallet{}, fmt.Errorf("locked earnings: %w", err)
+	}
+	w.LockedCents, w.LockedSales = locked.LockedCents, locked.LockedSales
+	if locked.LockedSales > 0 {
+		if w.NextReleaseAt, err = s.store.GetNextHoldRelease(ctx, userID); err != nil {
+			return domain.Wallet{}, fmt.Errorf("next hold release: %w", err)
+		}
+	}
+	return w, nil
 }
 
 func toDomainEntry(e repository.WalletEntry) domain.WalletEntry {

@@ -152,6 +152,8 @@ func writeTransactionErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "only the buyer can do this")
 	case errors.Is(err, domain.ErrCannotBuyOwnListing):
 		writeError(w, http.StatusUnprocessableEntity, "you cannot buy your own listing")
+	case errors.Is(err, domain.ErrTradeURLRequired):
+		writeError(w, http.StatusUnprocessableEntity, "set your steam trade url before buying")
 	case errors.Is(err, domain.ErrInsufficientBalance):
 		writeError(w, http.StatusUnprocessableEntity, "insufficient balance")
 	case errors.Is(err, domain.ErrListingNotActive):
@@ -180,6 +182,8 @@ type transactionResponse struct {
 	TradeOfferID        *string         `json:"tradeOfferId"`
 	HoldUntil           *time.Time      `json:"holdUntil"`
 	FailureReason       *string         `json:"failureReason"`
+	DeadlineAt          *time.Time      `json:"deadlineAt"`    // prazo da etapa atual (pending/sent)
+	BuyerTradeURL       *string         `json:"buyerTradeUrl"` // só para o vendedor, enquanto precisa enviar
 	CreatedAt           time.Time       `json:"createdAt"`
 	UpdatedAt           time.Time       `json:"updatedAt"`
 }
@@ -203,6 +207,8 @@ func toTransactionResponse(t domain.Transaction, viewerID int64) transactionResp
 		TradeOfferID:        t.TradeOfferID,
 		HoldUntil:           t.HoldUntil,
 		FailureReason:       t.FailureReason,
+		DeadlineAt:          activeDeadline(t),
+		BuyerTradeURL:       tradeURLForViewer(t, viewerID),
 		CreatedAt:           t.CreatedAt,
 		UpdatedAt:           t.UpdatedAt,
 	}
@@ -222,4 +228,21 @@ func toTransactionDetailResponse(d domain.TransactionDetail, viewerID int64) tra
 		Buyer:               toPublicUserResponse(d.Buyer),
 		Seller:              toPublicUserResponse(d.Seller),
 	}
+}
+
+// O prazo só vale enquanto a transação espera alguém agir.
+func activeDeadline(t domain.Transaction) *time.Time {
+	if t.Status == domain.TxPending || t.Status == domain.TxSent {
+		return t.DeadlineAt
+	}
+	return nil
+}
+
+// A trade URL do comprador é dado sensível (quem tem pode mandar ofertas para
+// ele): só o vendedor vê, e só enquanto precisa dela para enviar o item.
+func tradeURLForViewer(t domain.Transaction, viewerID int64) *string {
+	if t.SellerID == viewerID && t.Status == domain.TxPending {
+		return t.BuyerTradeURL
+	}
+	return nil
 }

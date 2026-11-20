@@ -76,6 +76,10 @@ func (h *WalletHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"balanceCents": wallet.BalanceCents,
 		"entries":      entries,
+		// Vendas em proteção de troca: ainda não estão no saldo.
+		"lockedCents":   wallet.LockedCents,
+		"lockedSales":   wallet.LockedSales,
+		"nextReleaseAt": wallet.NextReleaseAt,
 	})
 }
 

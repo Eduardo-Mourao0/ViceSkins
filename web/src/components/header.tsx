@@ -87,7 +87,11 @@ export function Header() {
                   {formatPrice(me.balanceCents)}
                 </p>
               </Link>
-              <div className="flex items-center gap-2 rounded-full border border-line bg-ink-850 py-1 pr-3 pl-1">
+              <Link
+                href="/profile"
+                title={me.tradeUrl ? "Perfil" : "Cadastre sua trade URL"}
+                className="relative flex items-center gap-2 rounded-full border border-line bg-ink-850 py-1 pr-3 pl-1 transition hover:border-pink/60"
+              >
                 <Image
                   src={me.avatarUrl}
                   alt=""
@@ -96,7 +100,12 @@ export function Header() {
                   className="rounded-full ring-1 ring-pink/60"
                 />
                 <span className="max-w-32 truncate text-sm">{me.displayName}</span>
-              </div>
+                {!me.tradeUrl && (
+                  <span className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-warning ring-2 ring-ink-950">
+                    <span className="sr-only">Trade URL não cadastrada</span>
+                  </span>
+                )}
+              </Link>
               <Button variant="ghost" onClick={() => logout.mutate()} loading={logout.isPending}>
                 Sair
               </Button>

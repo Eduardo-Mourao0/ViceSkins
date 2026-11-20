@@ -19,6 +19,8 @@ type fakeListingStore struct {
 	items    map[int64]repository.InventoryItem
 	listings map[int64]repository.Listing
 	nextID   int64
+
+	noTradeURL bool // vendedor sem trade URL cadastrada
 }
 
 func newFakeListingStore(items ...repository.InventoryItem) *fakeListingStore {
@@ -27,6 +29,14 @@ func newFakeListingStore(items ...repository.InventoryItem) *fakeListingStore {
 		f.items[it.ID] = it
 	}
 	return f
+}
+
+func (f *fakeListingStore) GetUserByID(_ context.Context, id int64) (repository.User, error) {
+	u := repository.User{ID: id}
+	if !f.noTradeURL {
+		u.TradeURL = ptr("https://steamcommunity.com/tradeoffer/new/?partner=1&token=abcdefgh")
+	}
+	return u, nil
 }
 
 func (f *fakeListingStore) GetInventoryItem(_ context.Context, id int64) (repository.InventoryItem, error) {
@@ -203,5 +213,16 @@ func TestCancelListing(t *testing.T) {
 				t.Fatalf("status = %s, want cancelled", l.Status)
 			}
 		})
+	}
+}
+
+func TestCreateListingRequiresTradeURL(t *testing.T) {
+	store := newFakeListingStore(tradableItem(1, seller))
+	store.noTradeURL = true
+	if _, err := NewListingService(store).Create(context.Background(), seller, 1, 1500); !errors.Is(err, domain.ErrTradeURLRequired) {
+		t.Fatalf("err = %v, want ErrTradeURLRequired", err)
+	}
+	if len(store.listings) != 0 {
+		t.Fatal("no listing must be created")
 	}
 }

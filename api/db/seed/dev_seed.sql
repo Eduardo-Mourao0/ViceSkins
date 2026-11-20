@@ -9,12 +9,15 @@
 
 BEGIN;
 
-INSERT INTO users (steam_id, display_name, avatar_url, inventory_synced_at)
+-- Trade URLs fictícias: contas demo não existem na Steam (a validação de
+-- dono é pulada para elas). Só preenche se ainda não houver uma.
+INSERT INTO users (steam_id, display_name, avatar_url, trade_url, inventory_synced_at)
 VALUES
-    ('demo-1', 'Neon Trader', 'https://avatars.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_full.jpg', now()),
-    ('demo-2', 'Sunset Collector', 'https://avatars.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_full.jpg', now()),
-    ('demo-3', 'Ocean Buyer', 'https://avatars.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_full.jpg', now())
-ON CONFLICT (steam_id) DO NOTHING;
+    ('demo-1', 'Neon Trader', 'https://avatars.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_full.jpg', 'https://steamcommunity.com/tradeoffer/new/?partner=1000001&token=demo0001', now()),
+    ('demo-2', 'Sunset Collector', 'https://avatars.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_full.jpg', 'https://steamcommunity.com/tradeoffer/new/?partner=1000002&token=demo0002', now()),
+    ('demo-3', 'Ocean Buyer', 'https://avatars.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_full.jpg', 'https://steamcommunity.com/tradeoffer/new/?partner=1000003&token=demo0003', now())
+ON CONFLICT (steam_id) DO UPDATE
+SET trade_url = COALESCE(users.trade_url, EXCLUDED.trade_url);
 
 -- Saldo inicial pelo ledger (saldo = soma das movimentações), só na primeira vez.
 WITH initial (steam_id, amount) AS (

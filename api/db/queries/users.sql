@@ -16,3 +16,9 @@ WHERE id = $1;
 SELECT * FROM users
 WHERE steam_id LIKE 'demo-%'
 ORDER BY id;
+
+-- name: SetTradeURL :one
+UPDATE users
+SET trade_url = @trade_url, updated_at = now()
+WHERE id = @id
+RETURNING *;

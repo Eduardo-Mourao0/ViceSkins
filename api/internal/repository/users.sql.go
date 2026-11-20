@@ -10,7 +10,7 @@ import (
 )
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at FROM users
+SELECT id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at, trade_url FROM users
 WHERE id = $1
 `
 
@@ -27,12 +27,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.UpdatedAt,
 		&i.InventoryRefreshAt,
 		&i.InventorySyncedAt,
+		&i.TradeURL,
 	)
 	return i, err
 }
 
 const listDemoUsers = `-- name: ListDemoUsers :many
-SELECT id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at FROM users
+SELECT id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at, trade_url FROM users
 WHERE steam_id LIKE 'demo-%'
 ORDER BY id
 `
@@ -57,6 +58,7 @@ func (q *Queries) ListDemoUsers(ctx context.Context) ([]User, error) {
 			&i.UpdatedAt,
 			&i.InventoryRefreshAt,
 			&i.InventorySyncedAt,
+			&i.TradeURL,
 		); err != nil {
 			return nil, err
 		}
@@ -68,6 +70,36 @@ func (q *Queries) ListDemoUsers(ctx context.Context) ([]User, error) {
 	return items, nil
 }
 
+const setTradeURL = `-- name: SetTradeURL :one
+UPDATE users
+SET trade_url = $1, updated_at = now()
+WHERE id = $2
+RETURNING id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at, trade_url
+`
+
+type SetTradeURLParams struct {
+	TradeURL *string
+	ID       int64
+}
+
+func (q *Queries) SetTradeURL(ctx context.Context, arg SetTradeURLParams) (User, error) {
+	row := q.db.QueryRow(ctx, setTradeURL, arg.TradeURL, arg.ID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.SteamID,
+		&i.DisplayName,
+		&i.AvatarURL,
+		&i.BalanceCents,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.InventoryRefreshAt,
+		&i.InventorySyncedAt,
+		&i.TradeURL,
+	)
+	return i, err
+}
+
 const upsertUserBySteamID = `-- name: UpsertUserBySteamID :one
 INSERT INTO users (steam_id, display_name, avatar_url)
 VALUES ($1, $2, $3)
@@ -75,7 +107,7 @@ ON CONFLICT (steam_id) DO UPDATE
 SET display_name = EXCLUDED.display_name,
     avatar_url   = EXCLUDED.avatar_url,
     updated_at   = now()
-RETURNING id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at
+RETURNING id, steam_id, display_name, avatar_url, balance_cents, created_at, updated_at, inventory_refresh_at, inventory_synced_at, trade_url
 `
 
 type UpsertUserBySteamIDParams struct {
@@ -97,6 +129,7 @@ func (q *Queries) UpsertUserBySteamID(ctx context.Context, arg UpsertUserBySteam
 		&i.UpdatedAt,
 		&i.InventoryRefreshAt,
 		&i.InventorySyncedAt,
+		&i.TradeURL,
 	)
 	return i, err
 }

@@ -56,6 +56,8 @@ type Transaction struct {
 	TradeOfferID  *string
 	HoldUntil     *time.Time
 	FailureReason *string
+	BuyerTradeURL *string    // destino da oferta, copiado na compra
+	DeadlineAt    *time.Time // prazo da etapa atual (só em pending e sent)
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }

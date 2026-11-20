@@ -56,6 +56,8 @@ services:
       # Proteção de troca da Steam é 7 dias (168h). Em dev, coloque algo como 2m no .env.
       TRADE_HOLD_DURATION: ${TRADE_HOLD_DURATION:-168h}
       SIM_TRADE_ACCEPT_AFTER: ${SIM_TRADE_ACCEPT_AFTER:-15s}
+      SELLER_SEND_TIMEOUT: ${SELLER_SEND_TIMEOUT:-12h}
+      BUYER_ACCEPT_TIMEOUT: ${BUYER_ACCEPT_TIMEOUT:-12h}
     ports:
       - "8080:8080"
     depends_on:

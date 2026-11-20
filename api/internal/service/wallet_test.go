@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/domain"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/repository"
@@ -18,6 +19,14 @@ func (f *fakeWalletStore) GetUserByID(context.Context, int64) (repository.User, 
 func (f *fakeWalletStore) Deposit(_ context.Context, userID, amount int64, _ string) (repository.WalletEntry, error) {
 	f.deposits++
 	return repository.WalletEntry{UserID: userID, AmountCents: amount, BalanceAfterCents: amount, Kind: "deposit"}, nil
+}
+
+func (f *fakeWalletStore) GetLockedSaleEarnings(context.Context, int64) (repository.GetLockedSaleEarningsRow, error) {
+	return repository.GetLockedSaleEarningsRow{}, nil
+}
+
+func (f *fakeWalletStore) GetNextHoldRelease(context.Context, int64) (*time.Time, error) {
+	return nil, nil
 }
 
 func (f *fakeWalletStore) ListWalletEntries(context.Context, repository.ListWalletEntriesParams) ([]repository.WalletEntry, error) {

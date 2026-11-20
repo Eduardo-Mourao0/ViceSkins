@@ -25,18 +25,20 @@ func (q *Queries) CancelActiveListingsForItem(ctx context.Context, itemID int64)
 }
 
 const createTransaction = `-- name: CreateTransaction :one
-INSERT INTO transactions (listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at
+INSERT INTO transactions (listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, buyer_trade_url, deadline_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz)
+RETURNING id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at, buyer_trade_url, deadline_at
 `
 
 type CreateTransactionParams struct {
-	ListingID  int64
-	BuyerID    int64
-	SellerID   int64
-	ItemID     int64
-	PriceCents int64
-	FeeCents   int64
+	ListingID     int64
+	BuyerID       int64
+	SellerID      int64
+	ItemID        int64
+	PriceCents    int64
+	FeeCents      int64
+	BuyerTradeURL *string
+	DeadlineAt    time.Time
 }
 
 func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionParams) (Transaction, error) {
@@ -47,6 +49,8 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		arg.ItemID,
 		arg.PriceCents,
 		arg.FeeCents,
+		arg.BuyerTradeURL,
+		arg.DeadlineAt,
 	)
 	var i Transaction
 	err := row.Scan(
@@ -63,7 +67,27 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		&i.FailureReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BuyerTradeURL,
+		&i.DeadlineAt,
 	)
+	return i, err
+}
+
+const getBuyerForUpdate = `-- name: GetBuyerForUpdate :one
+SELECT balance_cents, trade_url FROM users
+WHERE id = $1
+FOR UPDATE
+`
+
+type GetBuyerForUpdateRow struct {
+	BalanceCents int64
+	TradeURL     *string
+}
+
+func (q *Queries) GetBuyerForUpdate(ctx context.Context, id int64) (GetBuyerForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getBuyerForUpdate, id)
+	var i GetBuyerForUpdateRow
+	err := row.Scan(&i.BalanceCents, &i.TradeURL)
 	return i, err
 }
 
@@ -94,7 +118,7 @@ func (q *Queries) GetListingForUpdate(ctx context.Context, id int64) (Listing, e
 
 const getTransaction = `-- name: GetTransaction :one
 
-SELECT id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at FROM transactions
+SELECT id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at, buyer_trade_url, deadline_at FROM transactions
 WHERE id = $1
 `
 
@@ -116,12 +140,14 @@ func (q *Queries) GetTransaction(ctx context.Context, id int64) (Transaction, er
 		&i.FailureReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BuyerTradeURL,
+		&i.DeadlineAt,
 	)
 	return i, err
 }
 
 const getTransactionDetail = `-- name: GetTransactionDetail :one
-SELECT transactions.id, transactions.listing_id, transactions.buyer_id, transactions.seller_id, transactions.item_id, transactions.price_cents, transactions.fee_cents, transactions.status, transactions.trade_offer_id, transactions.hold_until, transactions.failure_reason, transactions.created_at, transactions.updated_at,
+SELECT transactions.id, transactions.listing_id, transactions.buyer_id, transactions.seller_id, transactions.item_id, transactions.price_cents, transactions.fee_cents, transactions.status, transactions.trade_offer_id, transactions.hold_until, transactions.failure_reason, transactions.created_at, transactions.updated_at, transactions.buyer_trade_url, transactions.deadline_at,
        inventory_items.id, inventory_items.owner_id, inventory_items.asset_id, inventory_items.class_id, inventory_items.instance_id, inventory_items.market_hash_name, inventory_items.name, inventory_items.item_type, inventory_items.weapon, inventory_items.rarity, inventory_items.rarity_color, inventory_items.exterior, inventory_items.float_value, inventory_items.paint_seed, inventory_items.icon_url, inventory_items.stickers, inventory_items.tradable, inventory_items.marketable, inventory_items.removed_at, inventory_items.created_at, inventory_items.updated_at,
        buyer.display_name  AS buyer_name,
        buyer.avatar_url    AS buyer_avatar_url,
@@ -160,6 +186,8 @@ func (q *Queries) GetTransactionDetail(ctx context.Context, id int64) (GetTransa
 		&i.Transaction.FailureReason,
 		&i.Transaction.CreatedAt,
 		&i.Transaction.UpdatedAt,
+		&i.Transaction.BuyerTradeURL,
+		&i.Transaction.DeadlineAt,
 		&i.InventoryItem.ID,
 		&i.InventoryItem.OwnerID,
 		&i.InventoryItem.AssetID,
@@ -190,7 +218,7 @@ func (q *Queries) GetTransactionDetail(ctx context.Context, id int64) (GetTransa
 }
 
 const getTransactionForUpdate = `-- name: GetTransactionForUpdate :one
-SELECT id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at FROM transactions
+SELECT id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at, buyer_trade_url, deadline_at FROM transactions
 WHERE id = $1
 FOR UPDATE
 `
@@ -212,21 +240,10 @@ func (q *Queries) GetTransactionForUpdate(ctx context.Context, id int64) (Transa
 		&i.FailureReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BuyerTradeURL,
+		&i.DeadlineAt,
 	)
 	return i, err
-}
-
-const getUserBalanceForUpdate = `-- name: GetUserBalanceForUpdate :one
-SELECT balance_cents FROM users
-WHERE id = $1
-FOR UPDATE
-`
-
-func (q *Queries) GetUserBalanceForUpdate(ctx context.Context, id int64) (int64, error) {
-	row := q.db.QueryRow(ctx, getUserBalanceForUpdate, id)
-	var balance_cents int64
-	err := row.Scan(&balance_cents)
-	return balance_cents, err
 }
 
 const getUserTransactionSummary = `-- name: GetUserTransactionSummary :one
@@ -298,6 +315,39 @@ func (q *Queries) ListDueHolds(ctx context.Context, arg ListDueHoldsParams) ([]i
 	return items, nil
 }
 
+const listExpiredTransactions = `-- name: ListExpiredTransactions :many
+SELECT id FROM transactions
+WHERE status IN ('pending', 'sent') AND deadline_at <= $1::timestamptz
+ORDER BY deadline_at
+LIMIT $2
+`
+
+type ListExpiredTransactionsParams struct {
+	Now     time.Time
+	MaxRows int32
+}
+
+// Transações que perderam o prazo da etapa atual.
+func (q *Queries) ListExpiredTransactions(ctx context.Context, arg ListExpiredTransactionsParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listExpiredTransactions, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTransactionIDsByStatus = `-- name: ListTransactionIDsByStatus :many
 
 SELECT id FROM transactions
@@ -334,7 +384,7 @@ func (q *Queries) ListTransactionIDsByStatus(ctx context.Context, arg ListTransa
 
 const listUserTransactions = `-- name: ListUserTransactions :many
 
-SELECT transactions.id, transactions.listing_id, transactions.buyer_id, transactions.seller_id, transactions.item_id, transactions.price_cents, transactions.fee_cents, transactions.status, transactions.trade_offer_id, transactions.hold_until, transactions.failure_reason, transactions.created_at, transactions.updated_at,
+SELECT transactions.id, transactions.listing_id, transactions.buyer_id, transactions.seller_id, transactions.item_id, transactions.price_cents, transactions.fee_cents, transactions.status, transactions.trade_offer_id, transactions.hold_until, transactions.failure_reason, transactions.created_at, transactions.updated_at, transactions.buyer_trade_url, transactions.deadline_at,
        inventory_items.id, inventory_items.owner_id, inventory_items.asset_id, inventory_items.class_id, inventory_items.instance_id, inventory_items.market_hash_name, inventory_items.name, inventory_items.item_type, inventory_items.weapon, inventory_items.rarity, inventory_items.rarity_color, inventory_items.exterior, inventory_items.float_value, inventory_items.paint_seed, inventory_items.icon_url, inventory_items.stickers, inventory_items.tradable, inventory_items.marketable, inventory_items.removed_at, inventory_items.created_at, inventory_items.updated_at,
        buyer.display_name  AS buyer_name,
        buyer.avatar_url    AS buyer_avatar_url,
@@ -404,6 +454,8 @@ func (q *Queries) ListUserTransactions(ctx context.Context, arg ListUserTransact
 			&i.Transaction.FailureReason,
 			&i.Transaction.CreatedAt,
 			&i.Transaction.UpdatedAt,
+			&i.Transaction.BuyerTradeURL,
+			&i.Transaction.DeadlineAt,
 			&i.InventoryItem.ID,
 			&i.InventoryItem.OwnerID,
 			&i.InventoryItem.AssetID,
@@ -506,9 +558,10 @@ SET status         = $1,
     trade_offer_id = COALESCE($2, trade_offer_id),
     hold_until     = COALESCE($3, hold_until),
     failure_reason = COALESCE($4, failure_reason),
+    deadline_at    = COALESCE($5, deadline_at),
     updated_at     = now()
-WHERE id = $5 AND status = $6
-RETURNING id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at
+WHERE id = $6 AND status = $7
+RETURNING id, listing_id, buyer_id, seller_id, item_id, price_cents, fee_cents, status, trade_offer_id, hold_until, failure_reason, created_at, updated_at, buyer_trade_url, deadline_at
 `
 
 type UpdateTransactionStatusParams struct {
@@ -516,6 +569,7 @@ type UpdateTransactionStatusParams struct {
 	TradeOfferID  *string
 	HoldUntil     *time.Time
 	FailureReason *string
+	DeadlineAt    *time.Time
 	ID            int64
 	FromStatus    string
 }
@@ -528,6 +582,7 @@ func (q *Queries) UpdateTransactionStatus(ctx context.Context, arg UpdateTransac
 		arg.TradeOfferID,
 		arg.HoldUntil,
 		arg.FailureReason,
+		arg.DeadlineAt,
 		arg.ID,
 		arg.FromStatus,
 	)
@@ -546,6 +601,8 @@ func (q *Queries) UpdateTransactionStatus(ctx context.Context, arg UpdateTransac
 		&i.FailureReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.BuyerTradeURL,
+		&i.DeadlineAt,
 	)
 	return i, err
 }

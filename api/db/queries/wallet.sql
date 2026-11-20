@@ -26,3 +26,17 @@ SELECT users.balance_cents,
        (SELECT COUNT(*) FROM wallet_entries WHERE user_id = users.id) AS entry_count
 FROM users
 WHERE users.id = $1;
+
+-- Vendas em proteção de troca: o valor já está reservado para o vendedor,
+-- mas só entra no saldo (e no ledger) quando a proteção acaba.
+-- name: GetLockedSaleEarnings :one
+SELECT COALESCE(SUM(price_cents - fee_cents), 0)::bigint AS locked_cents,
+       COUNT(*)                                          AS locked_sales
+FROM transactions
+WHERE seller_id = $1 AND status = 'on_hold';
+
+-- name: GetNextHoldRelease :one
+SELECT hold_until FROM transactions
+WHERE seller_id = $1 AND status = 'on_hold'
+ORDER BY hold_until
+LIMIT 1;

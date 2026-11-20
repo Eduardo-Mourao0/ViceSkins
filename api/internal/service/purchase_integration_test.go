@@ -26,13 +26,15 @@ type fakeProvider struct {
 	cancelErr error
 	delay     time.Duration // latência simulada da Steam em SendOffer
 	state     trade.OfferState
-	sends     int      // chamadas a SendOffer, com sucesso ou não
-	cancelled []string // ofertas canceladas
+	sends     int         // chamadas a SendOffer, com sucesso ou não
+	cancelled []string    // ofertas canceladas
+	lastOffer trade.Offer // última oferta recebida
 }
 
 func (p *fakeProvider) SendOffer(_ context.Context, o trade.Offer) (string, error) {
 	p.mu.Lock()
 	p.sends++
+	p.lastOffer = o
 	delay, sendErr := p.delay, p.sendErr
 	p.mu.Unlock()
 
@@ -84,6 +86,8 @@ type env struct {
 const (
 	feeBps          = 200 // 2%
 	maxSendAttempts = 3
+	sellerTimeout   = 2 * time.Hour // diferentes entre si: o teste confere qual prazo foi usado
+	buyerTimeout    = 3 * time.Hour
 )
 
 func setup(t *testing.T) *env {
@@ -93,11 +97,26 @@ func setup(t *testing.T) *env {
 	// HoldDuration 0: a proteção "acaba" na hora, para testar o fluxo inteiro.
 	svc := service.NewPurchaseService(store, provider, service.PurchaseConfig{
 		FeeBps: feeBps, HoldDuration: 0, MaxSendAttempts: maxSendAttempts,
+		SellerSendTimeout: sellerTimeout, BuyerAcceptTimeout: buyerTimeout,
 	})
 	return &env{t: t, ctx: context.Background(), pool: pool, store: store, provider: provider, svc: svc}
 }
 
 func (e *env) user(balance int64) int64 {
+	e.t.Helper()
+	id := e.userWithoutTradeURL(balance)
+	e.setTradeURL(id, fmt.Sprintf("https://steamcommunity.com/tradeoffer/new/?partner=%d&token=testtokn", id))
+	return id
+}
+
+func (e *env) setTradeURL(userID int64, url string) {
+	e.t.Helper()
+	if _, err := e.pool.Exec(e.ctx, `UPDATE users SET trade_url = $2 WHERE id = $1`, userID, url); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) userWithoutTradeURL(balance int64) int64 {
 	e.t.Helper()
 	id := testdb.NewUser(e.t, e.pool)
 	if balance > 0 {

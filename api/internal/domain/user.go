@@ -11,6 +11,7 @@ type User struct {
 	DisplayName  string
 	AvatarURL    string
 	BalanceCents int64
+	TradeURL     *string // nil até o usuário cadastrar
 	CreatedAt    time.Time
 }
 
