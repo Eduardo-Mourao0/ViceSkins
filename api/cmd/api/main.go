@@ -18,6 +18,7 @@ import (
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/config"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/handler"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/jobs"
+	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/migrate"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/payment"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/repository"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/secrets"
@@ -43,6 +44,13 @@ func run() error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+
+	if cfg.MigrateOnStart {
+		if err := migrate.Up(cfg.DatabaseURL); err != nil {
+			return err
+		}
+		slog.Info("migrations up to date")
 	}
 
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
@@ -107,23 +115,40 @@ func run() error {
 	// Pix fictício: só existe o provedor simulado por enquanto.
 	depositSvc := service.NewDepositService(store, payment.NewSimulated())
 
-	// Jobs em background. Ao sair de run(), os defers rodam em ordem inversa:
-	// primeiro param os jobs e esperamos a rodada atual, depois fecha o pool.
+	jobList := []jobs.Job{
+		{Name: "trade-outbox", Interval: 3 * time.Second, Fn: purchaseSvc.DispatchPendingOffers},
+		// O job roda com frequência, mas cada troca só é verificada a cada
+		// TRADE_CHECK_INTERVAL (controle por last_checked_at no banco).
+		{Name: "trade-watch", Interval: 5 * time.Second, Fn: purchaseSvc.WatchTrades},
+		{Name: "hold-release", Interval: 30 * time.Second, Fn: purchaseSvc.ReleaseDueHolds},
+		{Name: "expire-deadlines", Interval: 30 * time.Second, Fn: purchaseSvc.ExpireDeadlines},
+		{Name: "late-delivery-watch", Interval: time.Minute, Fn: purchaseSvc.WatchClosedTrades},
+		{Name: "dispute-release", Interval: time.Minute, Fn: purchaseSvc.ReleaseDueDisputes},
+		{Name: "deposit-expiry", Interval: 30 * time.Second, Fn: depositSvc.ExpireDeposits},
+	}
+
+	// Jobs em background (JOBS_MODE=ticker). Ao sair de run(), os defers rodam
+	// em ordem inversa: primeiro param os jobs e esperamos a rodada atual,
+	// depois fecha o pool. Com JOBS_MODE=external, quem roda é o cron.
 	jobsCtx, stopJobs := context.WithCancel(ctx)
 	var jobsWG sync.WaitGroup
 	defer func() {
 		stopJobs()
 		jobsWG.Wait()
 	}()
-	jobs.Every(jobsCtx, &jobsWG, "trade-outbox", 3*time.Second, purchaseSvc.DispatchPendingOffers)
-	// O job roda com frequência, mas cada troca só é verificada a cada
-	// TRADE_CHECK_INTERVAL (controle por last_checked_at no banco).
-	jobs.Every(jobsCtx, &jobsWG, "trade-watch", 5*time.Second, purchaseSvc.WatchTrades)
-	jobs.Every(jobsCtx, &jobsWG, "hold-release", 30*time.Second, purchaseSvc.ReleaseDueHolds)
-	jobs.Every(jobsCtx, &jobsWG, "expire-deadlines", 30*time.Second, purchaseSvc.ExpireDeadlines)
-	jobs.Every(jobsCtx, &jobsWG, "late-delivery-watch", time.Minute, purchaseSvc.WatchClosedTrades)
-	jobs.Every(jobsCtx, &jobsWG, "dispute-release", time.Minute, purchaseSvc.ReleaseDueDisputes)
-	jobs.Every(jobsCtx, &jobsWG, "deposit-expiry", 30*time.Second, depositSvc.ExpireDeposits)
+	if cfg.JobsMode == "ticker" {
+		for _, j := range jobList {
+			jobs.Every(jobsCtx, &jobsWG, j)
+		}
+	} else {
+		slog.Info("jobs run on demand: POST /internal/jobs/run", "jobs", len(jobList))
+	}
+	var jobsHandler *handler.JobsHandler
+	if cfg.JobsSecret != "" {
+		jobsHandler = handler.NewJobsHandler(cfg.JobsSecret, func(ctx context.Context) map[string]error {
+			return jobs.RunAll(ctx, jobList)
+		})
+	}
 
 	router := handler.NewRouter(handler.Deps{
 		DB:           pool,
@@ -137,6 +162,7 @@ func run() error {
 		Admin:        handler.NewAdminHandler(purchaseSvc),
 		Users:        authSvc,
 		Tokens:       tokens,
+		Jobs:         jobsHandler,
 	})
 
 	srv := &http.Server{

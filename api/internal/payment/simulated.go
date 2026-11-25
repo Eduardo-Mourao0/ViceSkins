@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"sync"
-	"time"
 )
 
 // demoPixKey é uma chave Pix que não pode existir: o domínio .invalid é
@@ -13,50 +11,27 @@ import (
 // responde "chave não encontrada" e nenhum dinheiro sai.
 const demoPixKey = "pagamento@viceskins.invalid"
 
-// Simulated é um provedor Pix em memória. O "pagamento" acontece quando o
-// usuário clica em simular (SimulatePayment), no lugar do app do banco.
-type Simulated struct {
-	now func() time.Time
+// Simulated é um provedor Pix sem estado. O "pagamento" é o usuário clicando
+// em simular (SimulatePayment), e o service confirma o depósito na mesma
+// requisição. Por isso o provedor não precisa lembrar de nada: o banco é a
+// fonte da verdade.
+//
+// Sem estado de propósito: em serverless (Vercel), a requisição que cria o
+// Pix e a que simula o pagamento podem cair em instâncias diferentes, e um
+// mapa em memória numa não existiria na outra.
+type Simulated struct{}
 
-	mu      sync.Mutex
-	charges map[string]*simCharge
-}
-
-type simCharge struct {
-	expiresAt time.Time
-	paid      bool
-}
-
-// SimOption ajusta o provedor simulado (nos testes, o relógio).
-type SimOption func(*Simulated)
-
-func WithClock(now func() time.Time) SimOption {
-	return func(s *Simulated) { s.now = now }
-}
-
-func NewSimulated(opts ...SimOption) *Simulated {
-	s := &Simulated{now: time.Now, charges: map[string]*simCharge{}}
-	for _, opt := range opts {
-		opt(s)
-	}
-	return s
-}
+func NewSimulated() *Simulated { return &Simulated{} }
 
 func (s *Simulated) Name() string { return "simulated" }
 
 func (s *Simulated) CreateCharge(_ context.Context, req ChargeRequest) (Charge, error) {
-	// ID aleatório, não um contador: depois de reiniciar a API um contador
-	// recomeçaria do 1 e colidiria com cobranças antigas no banco.
+	// ID aleatório, não um contador: um contador recomeçaria do 1 a cada
+	// processo e colidiria com cobranças antigas no banco.
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
 		return Charge{}, err
 	}
-	id := "sim_pix_" + hex.EncodeToString(b)
-
-	s.mu.Lock()
-	s.charges[id] = &simCharge{expiresAt: req.ExpiresAt}
-	s.mu.Unlock()
-
 	code := BRCode{
 		Key:          demoPixKey,
 		Description:  req.Description,
@@ -65,38 +40,18 @@ func (s *Simulated) CreateCharge(_ context.Context, req ChargeRequest) (Charge, 
 		AmountCents:  req.AmountCents,
 		TxID:         req.Reference,
 	}
-	return Charge{ID: id, BRCode: code.String()}, nil
+	return Charge{ID: "sim_pix_" + hex.EncodeToString(b), BRCode: code.String()}, nil
 }
 
-func (s *Simulated) ChargeStatus(_ context.Context, id string) (Status, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c, ok := s.charges[id]
-	switch {
-	case !ok:
-		return StatusUnknown, nil // ficou na memória de outro processo (a API reiniciou)
-	case c.paid:
-		return StatusPaid, nil
-	case !s.now().Before(c.expiresAt):
-		return StatusExpired, nil
-	default:
-		return StatusPending, nil
-	}
+// ChargeStatus: ninguém paga um Pix simulado fora do SimulatePayment, que já
+// confirma o depósito na hora. Então, para o job de expiração, um Pix
+// pendente que venceu nunca foi pago.
+func (s *Simulated) ChargeStatus(context.Context, string) (Status, error) {
+	return StatusUnknown, nil
 }
 
-// SimulatePayment faz o papel do usuário pagando o Pix no app do banco.
-func (s *Simulated) SimulatePayment(_ context.Context, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c, ok := s.charges[id]
-	switch {
-	case !ok:
-		return ErrChargeNotFound
-	case c.paid:
-		return nil
-	case !s.now().Before(c.expiresAt):
-		return ErrChargeExpired
-	}
-	c.paid = true
+// SimulatePayment faz o papel do usuário pagando o Pix no app do banco. O
+// service confere antes, no banco, se o depósito é dele e se não venceu.
+func (s *Simulated) SimulatePayment(context.Context, string) error {
 	return nil
 }

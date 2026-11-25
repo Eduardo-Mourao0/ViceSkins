@@ -171,6 +171,10 @@ TRADE_HOLD_DURATION=1m docker compose up -d api
 
 O compose se recusa a subir se faltar uma variável obrigatória, e a API se recusa a subir com configuração inválida.
 
+### Vercel (serverless)
+
+Front e API em dois projetos da Vercel, Postgres no Supabase e um cron externo chamando `POST /internal/jobs/run` a cada minuto (na Vercel nada roda entre requisições). Passo a passo em [docs/deploy-vercel.md](docs/deploy-vercel.md).
+
 ### Configuração
 
 | Variável | Padrão | Descrição |
@@ -186,6 +190,10 @@ O compose se recusa a subir se faltar uma variável obrigatória, e a API se rec
 | `TRADE_CHECK_INTERVAL` | `5s` / `2m` | Intervalo entre verificações de cada troca (simulado / steam) |
 | `SECRETS_KEY` | valor de dev | Chave mestra (base64, 32 bytes) que criptografa as API keys. Obrigatória com `steam` |
 | `ADMIN_STEAM_IDS` | — | SteamID64 dos admins (resolvem disputas), separados por vírgula |
+| `JOBS_MODE` | `ticker` | `external`: os jobs não rodam sozinhos, só por `POST /internal/jobs/run` (serverless) |
+| `JOBS_SECRET` | — | Token do cron no `/internal/jobs/run` (mínimo 32 caracteres). Vazio = rota desligada |
+| `MIGRATE_ON_START` | `false` | Aplica as migrations embutidas no binário ao subir |
+| `PORT` | — | Porta HTTP passada pelo host (Vercel); `HTTP_ADDR` tem precedência |
 
 ## Testes
 
@@ -218,6 +226,7 @@ O teste de concorrência da compra foi validado com **mutação**. Com o `FOR UP
 |---|---|---|---|
 | `GET` | `/auth/steam/login` · `/auth/steam/callback` | | Login com Steam |
 | `POST` | `/auth/logout` | | Encerra a sessão |
+| `POST` | `/internal/jobs/run` | `JOBS_SECRET` | Uma rodada de cada job (cron externo, em serverless) |
 | `GET` | `/me` | ✓ | Usuário logado |
 | `PUT` | `/me/trade-url` | ✓ | Cadastra a trade URL (validada: precisa ser da própria conta Steam) |
 | `PUT` | `/me/steam-api-key` · `DELETE` | ✓ | Cadastra (validada na Steam, guardada criptografada) · remove a API key |
@@ -252,7 +261,8 @@ api/
     ├── trade/          verificação das trocas: simulada e Steam (híbrida)
     ├── payment/        Pix: cobrança, BR Code (padrão EMV do BC) e provedor simulado
     ├── secrets/        AES-GCM para as API keys dos vendedores
-    ├── jobs/           tarefas periódicas
+    ├── jobs/           tarefas periódicas (ticker ou sob demanda, pelo cron)
+    ├── migrate/        migrations embutidas no binário (MIGRATE_ON_START)
     └── testdb/         Postgres descartável para testes
 web/                    Next.js (App Router)
 ```

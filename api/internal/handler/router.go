@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +22,7 @@ type Deps struct {
 	Admin        *AdminHandler
 	Users        UserGetter // RequireAdmin lê o papel do banco
 	Tokens       TokenIssuer
+	Jobs         *JobsHandler // nil = sem rota de jobs (JOBS_SECRET vazio)
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -29,17 +31,27 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	// Limite por IP. RealIP (acima) já trocou o RemoteAddr pelo IP do cliente
-	// vindo do proxy; em produção o Caddy descarta esses headers quando vêm
-	// do próprio cliente, então não dá para forjar outro IP.
-	r.Use(httprate.LimitByIP(600, time.Minute))
-	// Ações caras ou sensíveis (login, cobrança, compra) têm limite próprio.
-	strict := httprate.LimitByIP(20, time.Minute)
+	r.Use(noStore)
+	// Limite por IP, alto: atrás de um proxy que não repassa o IP do cliente
+	// (front e API em projetos separados na Vercel), todos os usuários
+	// chegam com o mesmo IP. Ele só segura loops e abuso grosseiro.
+	r.Use(httprate.LimitByIP(3000, time.Minute))
+	// Login: por IP, que é o que existe antes de autenticar.
+	loginLimit := httprate.LimitByIP(60, time.Minute)
+	// Ações caras ou sensíveis (cobrança, compra, API key): por usuário, que
+	// não depende de o proxy repassar o IP.
+	strict := httprate.Limit(20, time.Minute, httprate.WithKeyFuncs(func(r *http.Request) (string, error) {
+		id, _ := userIDFrom(r.Context())
+		return strconv.FormatInt(id, 10), nil
+	}))
 
 	r.Get("/healthz", Health(d.DB))
+	if d.Jobs != nil {
+		r.Post("/internal/jobs/run", d.Jobs.Run)
+	}
 
 	r.Route("/auth", func(r chi.Router) {
-		r.With(strict).Get("/steam/login", d.Auth.Login)
+		r.With(loginLimit).Get("/steam/login", d.Auth.Login)
 		r.Get("/steam/callback", d.Auth.Callback)
 		r.Post("/logout", d.Auth.Logout)
 	})
@@ -84,4 +96,14 @@ func NewRouter(d Deps) http.Handler {
 	})
 
 	return r
+}
+
+// noStore: nenhuma resposta da API vai para cache. São dados da sessão do
+// usuário, e um CDN na frente (como o da Vercel em rewrites externos)
+// poderia servir a resposta de um usuário para outro.
+func noStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
 }

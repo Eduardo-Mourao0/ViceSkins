@@ -2,11 +2,9 @@ package payment
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestCRC16(t *testing.T) {
@@ -45,34 +43,19 @@ func TestBRCode(t *testing.T) {
 	}
 }
 
-func TestSimulatedLifecycle(t *testing.T) {
+func TestSimulatedChargesAreUniqueAndStateless(t *testing.T) {
 	ctx := context.Background()
-	now := time.Now()
-	s := NewSimulated(WithClock(func() time.Time { return now }))
-
-	c, err := s.CreateCharge(ctx, ChargeRequest{Reference: "VSDEP1", AmountCents: 1000, ExpiresAt: now.Add(time.Minute)})
+	s := NewSimulated()
+	a, err := s.CreateCharge(ctx, ChargeRequest{Reference: "VSDEP1", AmountCents: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := s.ChargeStatus(ctx, c.ID); st != StatusPending {
-		t.Fatalf("status = %v, want pending", st)
+	b, _ := s.CreateCharge(ctx, ChargeRequest{Reference: "VSDEP2", AmountCents: 1000})
+	if a.ID == b.ID || !strings.Contains(a.BRCode, "0506VSDEP1") {
+		t.Fatalf("charges %+v %+v", a, b)
 	}
-	if err := s.SimulatePayment(ctx, c.ID); err != nil {
+	// Outra instância (outro processo na Vercel) aceita a simulação igual.
+	if err := NewSimulated().SimulatePayment(ctx, a.ID); err != nil {
 		t.Fatal(err)
-	}
-	if st, _ := s.ChargeStatus(ctx, c.ID); st != StatusPaid {
-		t.Fatalf("status = %v, want paid", st)
-	}
-
-	expired, _ := s.CreateCharge(ctx, ChargeRequest{Reference: "VSDEP2", AmountCents: 1000, ExpiresAt: now.Add(time.Minute)})
-	now = now.Add(2 * time.Minute)
-	if err := s.SimulatePayment(ctx, expired.ID); !errors.Is(err, ErrChargeExpired) {
-		t.Fatalf("err = %v, want ErrChargeExpired", err)
-	}
-	if st, _ := s.ChargeStatus(ctx, expired.ID); st != StatusExpired {
-		t.Fatalf("status = %v, want expired", st)
-	}
-	if st, _ := s.ChargeStatus(ctx, "nope"); st != StatusUnknown {
-		t.Fatalf("unknown charge status = %v", st)
 	}
 }

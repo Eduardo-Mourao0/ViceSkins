@@ -59,3 +59,30 @@ func TestAdminSteamIDsMustBeSteamID64(t *testing.T) {
 		}
 	}
 }
+
+func TestPortAndJobsMode(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("PORT", "3001")
+	cfg, err := Load()
+	if err != nil || cfg.HTTPAddr != ":3001" || cfg.JobsMode != "ticker" {
+		t.Fatalf("%+v, %v", cfg, err)
+	}
+
+	t.Setenv("JOBS_MODE", "external")
+	if _, err := Load(); err == nil {
+		t.Fatal("external jobs without JOBS_SECRET must be refused: nothing would run them")
+	}
+	t.Setenv("JOBS_SECRET", "short")
+	if _, err := Load(); err == nil {
+		t.Fatal("a short JOBS_SECRET must be refused")
+	}
+	t.Setenv("JOBS_SECRET", "0123456789abcdef0123456789abcdef")
+	if _, err := Load(); err == nil {
+		t.Fatal("simulated trades must be refused in external jobs mode")
+	}
+	t.Setenv("TRADE_PROVIDER", "steam")
+	t.Setenv("SECRETS_KEY", "c2VjcmV0")
+	if cfg, err := Load(); err != nil || cfg.JobsMode != "external" {
+		t.Fatalf("%+v, %v", cfg, err)
+	}
+}

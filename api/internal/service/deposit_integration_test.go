@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,35 +19,80 @@ import (
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/testdb"
 )
 
-// flakyPix é o provedor simulado, mas pode falhar ao criar a cobrança.
-type flakyPix struct {
-	*payment.Simulated
+// fakeGateway imita um gateway Pix real: lembra das cobranças, tem relógio
+// próprio e pode falhar ao criar. O provedor simulado de verdade não tem
+// estado (confirma na hora); este cobre o caminho de um gateway, em que o
+// pagamento chega por fora (webhook) e o job de expiração consulta o status.
+type fakeGateway struct {
+	mu        sync.Mutex
+	charges   map[string]*fakeCharge
+	seq       int
 	createErr error
+	ahead     atomic.Int64 // quanto o relógio do gateway está adiantado
 }
 
-func (f *flakyPix) CreateCharge(ctx context.Context, req payment.ChargeRequest) (payment.Charge, error) {
-	if f.createErr != nil {
-		return payment.Charge{}, f.createErr
+type fakeCharge struct {
+	expiresAt time.Time
+	paid      bool
+}
+
+func (g *fakeGateway) Name() string { return "fake" }
+
+func (g *fakeGateway) now() time.Time { return time.Now().Add(time.Duration(g.ahead.Load())) }
+
+func (g *fakeGateway) CreateCharge(_ context.Context, req payment.ChargeRequest) (payment.Charge, error) {
+	if g.createErr != nil {
+		return payment.Charge{}, g.createErr
 	}
-	return f.Simulated.CreateCharge(ctx, req)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.seq++
+	id := fmt.Sprintf("fake_%d", g.seq)
+	g.charges[id] = &fakeCharge{expiresAt: req.ExpiresAt}
+	code := payment.BRCode{Key: "k@x.invalid", MerchantName: "T", MerchantCity: "T", AmountCents: req.AmountCents, TxID: req.Reference}
+	return payment.Charge{ID: id, BRCode: code.String()}, nil
+}
+
+func (g *fakeGateway) ChargeStatus(_ context.Context, id string) (payment.Status, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	c, ok := g.charges[id]
+	switch {
+	case !ok:
+		return payment.StatusUnknown, nil
+	case c.paid:
+		return payment.StatusPaid, nil
+	case !g.now().Before(c.expiresAt):
+		return payment.StatusExpired, nil
+	}
+	return payment.StatusPending, nil
+}
+
+func (g *fakeGateway) SimulatePayment(_ context.Context, id string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	c, ok := g.charges[id]
+	switch {
+	case !ok:
+		return payment.ErrChargeNotFound
+	case !g.now().Before(c.expiresAt):
+		return payment.ErrChargeExpired
+	}
+	c.paid = true
+	return nil
 }
 
 type depositEnv struct {
 	t    *testing.T
 	ctx  context.Context
 	pool *pgxpool.Pool
-	pix  *flakyPix
-	// Quanto o relógio do provedor está adiantado: vencer um Pix "lá" também.
-	pixAhead atomic.Int64
-	svc      *service.DepositService
+	pix  *fakeGateway
+	svc  *service.DepositService
 }
 
 func setupDeposits(t *testing.T) *depositEnv {
 	pool := testdb.New(t)
-	e := &depositEnv{t: t, ctx: context.Background(), pool: pool}
-	e.pix = &flakyPix{Simulated: payment.NewSimulated(payment.WithClock(func() time.Time {
-		return time.Now().Add(time.Duration(e.pixAhead.Load()))
-	}))}
+	e := &depositEnv{t: t, ctx: context.Background(), pool: pool, pix: &fakeGateway{charges: map[string]*fakeCharge{}}}
 	e.svc = service.NewDepositService(repository.NewStore(pool), e.pix)
 	return e
 }
@@ -83,7 +129,7 @@ func (e *depositEnv) expireInDB(id int64) {
 }
 
 // expireAtProvider faz todas as cobranças vencerem também no provedor.
-func (e *depositEnv) expireAtProvider() { e.pixAhead.Store(int64(time.Hour)) }
+func (e *depositEnv) expireAtProvider() { e.pix.ahead.Store(int64(time.Hour)) }
 
 func (e *depositEnv) chargeID(id int64) string {
 	e.t.Helper()
@@ -238,5 +284,35 @@ func TestPixDepositPaysDebtFirst(t *testing.T) {
 	}
 	if balance != 700 || debt != 0 {
 		t.Fatalf("balance %d, debt %d; want 700 and 0", balance, debt)
+	}
+}
+
+// Na Vercel, criar o Pix e simular o pagamento podem cair em instâncias
+// diferentes da API. O provedor simulado não guarda estado, então funciona.
+func TestSimulatedPixWorksAcrossInstances(t *testing.T) {
+	e := setupDeposits(t)
+	store := repository.NewStore(e.pool)
+	instanceA := service.NewDepositService(store, payment.NewSimulated())
+	instanceB := service.NewDepositService(store, payment.NewSimulated())
+	user := testdb.NewUser(t, e.pool)
+
+	paid, err := instanceA.Create(e.ctx, user, 2_500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, err := instanceB.SimulatePayment(e.ctx, user, paid.ID); err != nil || d.Status != domain.DepositPaid {
+		t.Fatalf("simulate on another instance: %+v, %v", d, err)
+	}
+
+	unpaid, _ := instanceA.Create(e.ctx, user, 1_000)
+	e.expireInDB(unpaid.ID)
+	if err := instanceB.ExpireDeposits(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := instanceA.Get(e.ctx, user, unpaid.ID); d.Status != domain.DepositExpired {
+		t.Fatalf("unpaid simulated pix = %s, want expired", d.Status)
+	}
+	if b, _, n := e.money(user); b != 2_500 || n != 1 {
+		t.Fatalf("balance %d, entries %d; want only the paid one", b, n)
 	}
 }

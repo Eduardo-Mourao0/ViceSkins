@@ -136,13 +136,13 @@ func TestSteamLoginIsRateLimitedPerIP(t *testing.T) {
 		router.ServeHTTP(rec, req)
 		return rec.Code
 	}
-	for i := range 20 {
+	for i := range 60 {
 		if code := hit("10.0.0.1"); code != http.StatusFound {
 			t.Fatalf("request %d = %d, want 302", i+1, code)
 		}
 	}
 	if code := hit("10.0.0.1"); code != http.StatusTooManyRequests {
-		t.Fatalf("21st request = %d, want 429", code)
+		t.Fatalf("61st request = %d, want 429", code)
 	}
 	if code := hit("10.0.0.2"); code != http.StatusFound {
 		t.Fatalf("other ip = %d, want 302 (limit is per ip)", code)

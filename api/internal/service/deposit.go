@@ -160,7 +160,7 @@ func (s *DepositService) SimulatePayment(ctx context.Context, userID, id int64) 
 
 	switch err := sim.SimulatePayment(ctx, *raw.ProviderChargeID); {
 	case errors.Is(err, payment.ErrChargeExpired), errors.Is(err, payment.ErrChargeNotFound):
-		// Not found: a cobrança ficou na memória de antes de a API reiniciar.
+		// Not found: o gateway não conhece a cobrança; tratar como vencida.
 		return domain.Deposit{}, domain.ErrDepositExpired
 	case err != nil:
 		return domain.Deposit{}, fmt.Errorf("simulate payment: %w", err)

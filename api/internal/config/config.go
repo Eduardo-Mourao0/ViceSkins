@@ -31,12 +31,20 @@ type Config struct {
 	TradeCheckInterval time.Duration // cada troca é verificada no máximo nesse intervalo
 	SecretsKey         string        // base64 de 32 bytes: criptografa as API keys dos vendedores
 
+	// JOBS_MODE: "ticker" (padrão) roda os jobs em goroutines dentro da API;
+	// "external" não roda nada sozinho, e um cron chama POST /internal/jobs/run
+	// (serverless, como a Vercel, onde nada roda entre requisições).
+	JobsMode   string
+	JobsSecret string // token do cron no /internal/jobs/run (vazio = rota desligada)
+
+	MigrateOnStart bool // aplica as migrations ao subir (quem não tem como rodar o migrate à parte)
+
 	AdminSteamIDs []string // quem resolve disputas (ADMIN_STEAM_IDS, separados por vírgula)
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		HTTPAddr:        getenv("HTTP_ADDR", ":8080"),
+		HTTPAddr:        httpAddr(),
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		PublicAPIURL:    strings.TrimRight(getenv("PUBLIC_API_URL", "http://localhost:8080"), "/"),
 		AuthRedirectURL: getenv("AUTH_REDIRECT_URL", "http://localhost:3000"),
@@ -98,10 +106,41 @@ func Load() (Config, error) {
 		errs = append(errs, errors.New("TRADE_CHECK_INTERVAL must be a positive duration"))
 	}
 
+	cfg.JobsSecret = os.Getenv("JOBS_SECRET")
+	if cfg.JobsSecret != "" && len(cfg.JobsSecret) < 32 {
+		errs = append(errs, errors.New("JOBS_SECRET must have at least 32 characters"))
+	}
+	switch cfg.JobsMode = getenv("JOBS_MODE", "ticker"); cfg.JobsMode {
+	case "ticker":
+	case "external":
+		if cfg.JobsSecret == "" {
+			errs = append(errs, errors.New("JOBS_SECRET is required with JOBS_MODE=external: nothing else would run the jobs"))
+		}
+		// A troca simulada guarda as ofertas em memória: em serverless, cada
+		// instância teria as suas e as trocas nunca andariam.
+		if cfg.TradeProvider == "simulated" {
+			errs = append(errs, errors.New("TRADE_PROVIDER=simulated keeps offers in memory and does not work with JOBS_MODE=external; use steam"))
+		}
+	default:
+		errs = append(errs, errors.New("JOBS_MODE must be ticker or external"))
+	}
+	cfg.MigrateOnStart = os.Getenv("MIGRATE_ON_START") == "true"
+
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// httpAddr: HTTP_ADDR, ou a porta em PORT (é o que a Vercel e outros hosts passam).
+func httpAddr() string {
+	if a := os.Getenv("HTTP_ADDR"); a != "" {
+		return a
+	}
+	if p := os.Getenv("PORT"); p != "" {
+		return ":" + p
+	}
+	return ":8080"
 }
 
 func parseDuration(key, fallback string) (time.Duration, error) {
