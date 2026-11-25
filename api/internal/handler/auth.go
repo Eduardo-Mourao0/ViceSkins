@@ -60,12 +60,19 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /auth/steam/callback
+//
+// Erros não aparecem como JSON: o usuário chegou aqui navegando, vindo da
+// Steam. Ele volta para o site com um código curto na URL (?login=erro&
+// motivo=...), e o front mostra a mensagem. O detalhe técnico fica no log.
 func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	c, err := r.Cookie(stateCookie)
 	if err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(q.Get("state"))) != 1 {
-		writeError(w, http.StatusBadRequest, "invalid login state")
+		// Sem o cookie (expirou, outra aba, outro endereço do site) ou com
+		// outro valor (login forjado): nos dois casos, não entra.
+		slog.Warn("steam login: invalid state", "has_cookie", err == nil)
+		h.loginFailed(w, r, loginExpired)
 		return
 	}
 	h.clearCookie(w, stateCookie, "/")
@@ -74,11 +81,11 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, domain.ErrUnauthenticated) {
 			slog.Warn("steam login rejected", "err", err)
-			writeError(w, http.StatusUnauthorized, "steam login failed")
+			h.loginFailed(w, r, loginRejected)
 			return
 		}
 		slog.Error("steam login", "err", err)
-		writeError(w, http.StatusBadGateway, "could not complete steam login")
+		h.loginFailed(w, r, loginUnavailable)
 		return
 	}
 
@@ -86,6 +93,25 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, h.redirectURL, http.StatusFound)
+}
+
+// Motivos de falha no login, como aparecem na URL. Lista fechada: nada da
+// requisição ou do erro vai para a URL.
+const (
+	loginExpired     = "expirou"
+	loginRejected    = "recusado"
+	loginUnavailable = "indisponivel"
+)
+
+// loginFailed manda o usuário para a página inicial do site com o motivo.
+// O destino vem da configuração (origem do AUTH_REDIRECT_URL), nunca da
+// requisição: não dá para usar o callback como redirecionamento aberto.
+func (h *AuthHandler) loginFailed(w http.ResponseWriter, r *http.Request, reason string) {
+	home := "/"
+	if u, err := url.Parse(h.redirectURL); err == nil && u.Scheme != "" && u.Host != "" {
+		home = u.Scheme + "://" + u.Host + "/"
+	}
+	http.Redirect(w, r, home+"?login=erro&motivo="+reason, http.StatusFound)
 }
 
 // startSession emite o JWT e grava o cookie de sessão. Em caso de erro, já

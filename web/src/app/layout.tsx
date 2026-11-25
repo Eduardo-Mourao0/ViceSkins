@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Sora, Yellowtail } from "next/font/google";
 import { Providers } from "./providers";
 import { Header } from "@/components/header";
+import { LoginError } from "@/components/login-error";
 import "./globals.css";
 
 const sora = Sora({ variable: "--font-sora", subsets: ["latin"] });
@@ -18,6 +19,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex min-h-full flex-col font-sans">
         <Providers>
           <Header />
+          <LoginError />
           <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">{children}</main>
           <footer className="border-t border-line/60 py-6 text-center text-xs text-faint">
             ViceSkins · projeto de portfólio · o saldo é fictício (Pix simulado), as trocas são reais na Steam · não

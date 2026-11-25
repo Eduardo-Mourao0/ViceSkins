@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -61,15 +62,38 @@ func TestLoginSetsStateAndRedirects(t *testing.T) {
 	}
 }
 
-func TestCallbackRejectsStateMismatch(t *testing.T) {
-	router, _ := newTestRouter(&fakeAuthService{user: domain.User{ID: 1}})
-	req := httptest.NewRequest(http.MethodGet, "/auth/steam/callback?state=attacker", nil)
-	req.AddCookie(&http.Cookie{Name: stateCookie, Value: "victim"})
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+func TestCallbackFailuresGoBackToTheSite(t *testing.T) {
+	tests := []struct {
+		name   string
+		cookie string // "" = sem cookie de estado
+		err    error
+		reason string
+	}{
+		{"state mismatch (forged login)", "victim", nil, "expirou"},
+		{"no state cookie (expired, other tab)", "", nil, "expirou"},
+		{"steam did not confirm", "attacker", domain.ErrUnauthenticated, "recusado"},
+		{"steam unavailable", "attacker", errors.New("steam down"), "indisponivel"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router, _ := newTestRouter(&fakeAuthService{user: domain.User{ID: 1}, err: tt.err})
+			req := httptest.NewRequest(http.MethodGet, "/auth/steam/callback?state=attacker", nil)
+			if tt.cookie != "" {
+				req.AddCookie(&http.Cookie{Name: stateCookie, Value: tt.cookie})
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
+			want := "http://localhost:3000/?login=erro&motivo=" + tt.reason
+			if rec.Code != http.StatusFound || rec.Header().Get("Location") != want {
+				t.Fatalf("got %d → %q, want 302 → %q", rec.Code, rec.Header().Get("Location"), want)
+			}
+			for _, c := range rec.Result().Cookies() {
+				if c.Name == sessionCookie && c.Value != "" {
+					t.Fatal("a failed login must not create a session")
+				}
+			}
+		})
 	}
 }
 
