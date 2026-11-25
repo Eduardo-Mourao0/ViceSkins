@@ -14,14 +14,14 @@ Projeto de portfólio com foco no backend: **Go**, **PostgreSQL** e as partes di
 - **Inventário de CS2** importado da Steam, com float, pattern, stickers e chaveiros, em cache com cooldown
 - **Anúncios**: criar e cancelar, com validação de dono, item negociável e preço
 - **Mercado público** com busca por nome, faixa de preço, desgaste (FN–BS), faixa de float, ordenação e paginação
-- **Carteira** com depósito simulado e extrato; o saldo é um ledger auditável. O valor das vendas fica **bloqueado** até o fim da proteção de troca da Steam
+- **Carteira** com depósito via **Pix** (QR Code e copia e cola, dinheiro fictício) e extrato; o saldo é um ledger auditável. O valor das vendas fica **bloqueado** até o fim da proteção de troca da Steam
 - **Trade URL** obrigatória para comprar e anunciar, validada contra a conta Steam do usuário
 - **Compra atômica**: dois compradores no mesmo item ao mesmo tempo → exatamente um leva
 - **Entrega simulada** com máquina de estados `pending → sent → on_hold → completed`, estorno automático em falhas e pagamento ao vendedor só depois da proteção de troca
 - **Prazos** por etapa: vendedor que não envia ou comprador que não aceita a tempo → compra cancelada e estornada
 - **Disputas** de entrega tardia: cobrança automática do comprador, garantia da plataforma para o vendedor e painel de admin
 - **Histórico** de compras e vendas com resumo e acompanhamento ao vivo
-- **Modo demonstração**: seed com usuários e anúncios, e login sem Steam para testar tudo localmente
+- **Pronto para produção:** compose com HTTPS automático (Caddy), rate limit por IP e headers de segurança
 
 ## Stack
 
@@ -97,6 +97,7 @@ stateDiagram-v2
 **Dinheiro**
 - Sempre em centavos (`int64`/`BIGINT`), nunca em float, inclusive no front: `"15,50"` vira `1550` direto do texto.
 - A taxa da plataforma é configurável em *basis points* (200 = 2%), calculada só com inteiros.
+- **Depósito via Pix:** o saldo só entra quando a cobrança é paga. A confirmação trava a linha do depósito (`FOR UPDATE`), então um aviso de pagamento repetido ou concorrente credita uma vez só. Antes de expirar um Pix, o job pergunta ao provedor: o que foi pago no último segundo é creditado. O QR Code é um BR Code válido no padrão do Banco Central, mas com uma chave Pix que não pode existir (domínio `.invalid`): se alguém tentar pagar no banco, nada sai da conta.
 
 **Saldo auditável**
 - Toda movimentação é uma linha imutável em `wallet_entries`, com o saldo resultante.
@@ -148,22 +149,11 @@ stateDiagram-v2
 
 **Pré-requisito:** Docker com Docker Compose.
 
-### Modo demonstração (sem conta Steam)
+### Local
 
-```bash
-git clone https://github.com/Eduardo-Mourao0/ViceSkins.git
-cd ViceSkins
-docker compose up -d --build     # postgres, migrations, api e web
-docker compose run --rm seed     # usuários, itens e anúncios de demonstração
-```
-
-Abra **http://localhost:3000** e clique em **Entrar como demo**.
-
-| Conta | Saldo | Papel |
-|---|---|---|
-| Ocean Buyer | R$ 5.000,00 | comprador: use para comprar |
-| Neon Trader | R$ 250,00 | vendedor, com anúncios ativos |
-| Sunset Collector | R$ 120,00 | vendedor, com anúncios ativos |
+1. Gere uma Web API key em https://steamcommunity.com/dev/apikey (domínio: `localhost`).
+2. `cp .env.example .env` e preencha `STEAM_API_KEY`.
+3. `docker compose up -d --build` (postgres, migrations, api e web) e abra **http://localhost:3000**. Entre com a Steam; o inventário precisa estar público.
 
 Para ver o ciclo da compra inteiro sem esperar 7 dias, encurte a proteção de troca:
 
@@ -171,19 +161,22 @@ Para ver o ciclo da compra inteiro sem esperar 7 dias, encurte a proteção de t
 TRADE_HOLD_DURATION=1m docker compose up -d api
 ```
 
-### Com a Steam
+### Produção (uma máquina com Docker)
 
-1. Gere uma Web API key em https://steamcommunity.com/dev/apikey (domínio: `localhost`).
-2. `cp .env.example .env` e preencha `STEAM_API_KEY`.
-3. `docker compose up -d --build`, e use **Entrar com Steam**. O inventário precisa estar público.
+`docker-compose.prod.yml` sobe Postgres, API, front e **Caddy**, que emite o certificado HTTPS sozinho. Só o Caddy fica exposto (portas 80/443); a API fica na rede interna e o navegador fala com ela pelo proxy `/api` do Next. Lá as trocas são verificadas na Steam de verdade (`TRADE_PROVIDER=steam`), e o dinheiro continua fictício (Pix simulado).
+
+1. Aponte o domínio (registro A) para o IP da máquina e gere a API key da Steam com esse domínio.
+2. `cp deploy/.env.prod.example .env` e preencha (há o comando para gerar cada segredo).
+3. `docker compose -f docker-compose.prod.yml up -d --build`
+
+O compose se recusa a subir se faltar uma variável obrigatória, e a API se recusa a subir com configuração inválida.
 
 ### Configuração
 
 | Variável | Padrão | Descrição |
 |---|---|---|
-| `STEAM_API_KEY` | — | Necessária só para o login real com a Steam |
+| `STEAM_API_KEY` | — | Login com a Steam e perfil do usuário |
 | `JWT_SECRET` | valor de dev | Assinatura da sessão (mínimo 32 caracteres) |
-| `DEV_LOGIN` | `true` no compose | Login sem Steam nas contas demo. A API se recusa a subir se ligado junto com `COOKIE_SECURE=true` |
 | `PLATFORM_FEE_BPS` | `200` | Taxa da plataforma (200 = 2%) |
 | `TRADE_HOLD_DURATION` | `168h` | Proteção de troca antes de pagar o vendedor |
 | `SIM_TRADE_ACCEPT_AFTER` | `15s` | Simulação: tempo até a oferta ser "aceita" |
@@ -192,7 +185,7 @@ TRADE_HOLD_DURATION=1m docker compose up -d api
 | `TRADE_PROVIDER` | `simulated` | `steam` liga a verificação real (inventário público + API key opcional) |
 | `TRADE_CHECK_INTERVAL` | `5s` / `2m` | Intervalo entre verificações de cada troca (simulado / steam) |
 | `SECRETS_KEY` | valor de dev | Chave mestra (base64, 32 bytes) que criptografa as API keys. Obrigatória com `steam` |
-| `ADMIN_STEAM_IDS` | `demo-1` no compose | SteamIDs dos admins (resolvem disputas). Contas demo são recusadas com `COOKIE_SECURE=true` |
+| `ADMIN_STEAM_IDS` | — | SteamID64 dos admins (resolvem disputas), separados por vírgula |
 
 ## Testes
 
@@ -210,6 +203,7 @@ Os testes de integração rodam contra **PostgreSQL real** (testcontainers). Cad
 - **job de prazos e aceite da oferta disputando a mesma transação** → só um vence, e o resultado é coerente (item entregue sem estorno, ou estorno com o item de volta)
 - **10 workers despachando o outbox** ao mesmo tempo → a oferta sai uma vez só; lease vencido é retomado; retry com backoff e desistência com estorno
 - 50 depósitos simultâneos → nenhuma atualização de saldo perdida
+- **Pix:** confirmação repetida e 20 confirmações simultâneas (simulação e job de expiração) → crédito único; Pix pago no provedor depois de vencer aqui é creditado, não expirado; falha do provedor não deixa depósito órfão
 - o ciclo completo, estornos, reversão durante a proteção e transições inválidas
 - todos os pares (de → para) da máquina de estados
 - paginação por cursor estável com dados novos chegando entre páginas
@@ -237,7 +231,10 @@ O teste de concorrência da compra foi validado com **mutação**. Com o `FOR UP
 | `POST` | `/listings/{id}/buy` | ✓ | Comprar |
 | `GET` | `/me/transactions` · `/me/transactions/summary` | ✓ | Histórico (`role`, `status`, `before`) · resumo |
 | `GET` | `/transactions/{id}` · `POST /transactions/{id}/cancel` | ✓ | Detalhe · cancelar compra |
-| `GET` | `/me/wallet` · `POST /wallet/deposits` | ✓ | Saldo e extrato · depósito simulado |
+| `GET` | `/me/wallet` | ✓ | Saldo e extrato |
+| `POST` | `/wallet/deposits` | ✓ | Gera um Pix (QR Code e copia e cola) |
+| `GET` | `/wallet/deposits/open` · `/wallet/deposits/{id}` | ✓ | Pix em aberto · status de um Pix |
+| `POST` | `/wallet/deposits/{id}/simulate-payment` | ✓ | Paga o Pix (só com o provedor simulado) |
 
 ## Estrutura
 
@@ -246,7 +243,6 @@ api/
 ├── cmd/api/            main.go: configuração, montagem das dependências, servidor e jobs
 ├── db/migrations/      golang-migrate
 ├── db/queries/         SQL do sqlc
-├── db/seed/            dados de demonstração
 └── internal/
     ├── domain/         tipos, regras puras, máquina de estados, erros
     ├── service/        regras de negócio (compra, carteira, inventário...)
@@ -254,6 +250,7 @@ api/
     ├── handler/        HTTP (chi), DTOs, middleware de autenticação
     ├── steam/          OpenID, Web API e inventário
     ├── trade/          verificação das trocas: simulada e Steam (híbrida)
+    ├── payment/        Pix: cobrança, BR Code (padrão EMV do BC) e provedor simulado
     ├── secrets/        AES-GCM para as API keys dos vendedores
     ├── jobs/           tarefas periódicas
     └── testdb/         Postgres descartável para testes
@@ -264,7 +261,7 @@ web/                    Next.js (App Router)
 
 - **Itens sem float sem API key:** caixas e stickers não têm impressão digital única, então anunciá-los exige a API key. Também não dá para detectar a reversão de um item sem float (ele volta com outro `asset_id`).
 - **Proteção de troca e inventário público:** ainda não confirmei se itens em proteção aparecem no inventário público do comprador. Se não aparecerem, sem API key a entrega só é confirmada no fim da proteção. As regras de estorno já tratam esse caso (nada é estornado com o item fora do vendedor).
-- **Depósitos reais:** integrar um gateway de pagamento e chaves de idempotência.
+- **Dinheiro real:** o Pix passa por uma interface `PaymentProvider`; plugar um gateway (AbacatePay, Asaas) é implementar a cobrança e o webhook. O bloqueio é jurídico, não técnico: guardar saldo de terceiros e repassar a vendedores exige CNPJ e cuidado regulatório.
 - **Revogação de sessão:** hoje o JWT vale até expirar; sessões no banco permitiriam logout em todos os dispositivos.
 - **Preços de referência:** job buscando preços de mercado para sugerir o valor do anúncio.
 - **CI:** rodar os testes de integração no GitHub Actions.

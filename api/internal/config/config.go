@@ -17,7 +17,6 @@ type Config struct {
 	JWTSecret       string
 	SteamAPIKey     string
 	CookieSecure    bool
-	DevLogin        bool // login sem Steam nas contas demo da seed
 
 	PlatformFeeBps    int64         // taxa da plataforma em basis points (200 = 2%)
 	TradeHoldDuration time.Duration // proteção de troca antes de pagar o vendedor
@@ -26,7 +25,7 @@ type Config struct {
 	SellerSendTimeout  time.Duration // prazo do vendedor para enviar a oferta
 	BuyerAcceptTimeout time.Duration // prazo do comprador para aceitar a oferta
 
-	// Verificação das trocas: "simulated" (padrão, dev/demo) ou "steam" (P2P
+	// Verificação das trocas: "simulated" (padrão, dev) ou "steam" (P2P
 	// real, híbrida: inventário público + API key opcional do vendedor).
 	TradeProvider      string
 	TradeCheckInterval time.Duration // cada troca é verificada no máximo nesse intervalo
@@ -44,16 +43,11 @@ func Load() (Config, error) {
 		JWTSecret:       os.Getenv("JWT_SECRET"),
 		SteamAPIKey:     os.Getenv("STEAM_API_KEY"),
 		CookieSecure:    os.Getenv("COOKIE_SECURE") == "true",
-		DevLogin:        os.Getenv("DEV_LOGIN") == "true",
 	}
 
 	var errs []error
 	if cfg.DatabaseURL == "" {
 		errs = append(errs, errors.New("DATABASE_URL is required"))
-	}
-	// COOKIE_SECURE=true indica produção (HTTPS): ali o login demo nunca pode existir.
-	if cfg.DevLogin && cfg.CookieSecure {
-		errs = append(errs, errors.New("DEV_LOGIN must not be enabled together with COOKIE_SECURE=true"))
 	}
 	if len(cfg.JWTSecret) < 32 {
 		errs = append(errs, errors.New("JWT_SECRET must have at least 32 characters"))
@@ -80,9 +74,8 @@ func Load() (Config, error) {
 	for _, id := range strings.Split(os.Getenv("ADMIN_STEAM_IDS"), ",") {
 		if id = strings.TrimSpace(id); id != "" {
 			cfg.AdminSteamIDs = append(cfg.AdminSteamIDs, id)
-			// Contas demo entram sem senha: nunca podem ser admin em produção.
-			if cfg.CookieSecure && strings.HasPrefix(id, "demo-") {
-				errs = append(errs, errors.New("ADMIN_STEAM_IDS must not contain demo accounts with COOKIE_SECURE=true"))
+			if _, err := strconv.ParseUint(id, 10, 64); err != nil || len(id) != 17 {
+				errs = append(errs, fmt.Errorf("ADMIN_STEAM_IDS: %q is not a SteamID64", id))
 			}
 		}
 	}

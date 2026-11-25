@@ -14,7 +14,6 @@ import (
 
 type WalletStore interface {
 	GetUserByID(ctx context.Context, id int64) (repository.User, error)
-	Deposit(ctx context.Context, userID, amountCents int64, description string) (repository.WalletEntry, error)
 	ListWalletEntries(ctx context.Context, arg repository.ListWalletEntriesParams) ([]repository.WalletEntry, error)
 	GetLockedSaleEarnings(ctx context.Context, sellerID int64) (repository.GetLockedSaleEarningsRow, error)
 	GetNextHoldRelease(ctx context.Context, sellerID int64) (*time.Time, error)
@@ -26,23 +25,6 @@ type WalletService struct {
 
 func NewWalletService(store WalletStore) *WalletService {
 	return &WalletService{store: store}
-}
-
-// Deposit adiciona saldo fake (não há gateway de pagamento no MVP).
-func (s *WalletService) Deposit(ctx context.Context, userID, amountCents int64) (domain.WalletEntry, error) {
-	if amountCents < domain.MinDepositCents || amountCents > domain.MaxDepositCents {
-		return domain.WalletEntry{}, fmt.Errorf("%w: deposit must be between %d and %d cents",
-			domain.ErrInvalidInput, domain.MinDepositCents, domain.MaxDepositCents)
-	}
-
-	e, err := s.store.Deposit(ctx, userID, amountCents, "Depósito (simulado)")
-	if errors.Is(err, pgx.ErrNoRows) { // AddToBalance não achou o usuário
-		return domain.WalletEntry{}, domain.ErrNotFound
-	}
-	if err != nil {
-		return domain.WalletEntry{}, fmt.Errorf("deposit: %w", err)
-	}
-	return toDomainEntry(e), nil
 }
 
 // Wallet devolve o saldo, as últimas movimentações e o valor bloqueado em

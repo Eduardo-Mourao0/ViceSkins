@@ -20,7 +20,6 @@ import (
 type UserRepository interface {
 	UpsertUserBySteamID(ctx context.Context, arg repository.UpsertUserBySteamIDParams) (repository.User, error)
 	GetUserByID(ctx context.Context, id int64) (repository.User, error)
-	ListDemoUsers(ctx context.Context) ([]repository.User, error)
 	SetTradeURL(ctx context.Context, arg repository.SetTradeURLParams) (repository.User, error)
 	SetSteamAPIKey(ctx context.Context, arg repository.SetSteamAPIKeyParams) (repository.User, error)
 }
@@ -83,31 +82,6 @@ func (s *AuthService) GetUser(ctx context.Context, id int64) (domain.User, error
 	return toDomainUser(u), nil
 }
 
-// DemoUsers lista as contas de demonstração (só usado com DEV_LOGIN ligado).
-func (s *AuthService) DemoUsers(ctx context.Context) ([]domain.User, error) {
-	rows, err := s.users.ListDemoUsers(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list demo users: %w", err)
-	}
-	out := make([]domain.User, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, toDomainUser(r))
-	}
-	return out, nil
-}
-
-// DemoLogin valida que o usuário é uma conta demo. Contas reais só entram pela Steam.
-func (s *AuthService) DemoLogin(ctx context.Context, userID int64) (domain.User, error) {
-	u, err := s.GetUser(ctx, userID)
-	if err != nil {
-		return domain.User{}, err
-	}
-	if !u.IsDemo() {
-		return domain.User{}, domain.ErrForbidden
-	}
-	return u, nil
-}
-
 // SetTradeURL valida e salva a trade URL do usuário (forma canônica).
 func (s *AuthService) SetTradeURL(ctx context.Context, userID int64, raw string) (domain.User, error) {
 	u, err := s.GetUser(ctx, userID)
@@ -150,12 +124,8 @@ func (s *AuthService) SetSteamAPIKey(ctx context.Context, userID int64, raw stri
 	if s.keys == nil {
 		return domain.User{}, domain.ErrFeatureDisabled
 	}
-	u, err := s.GetUser(ctx, userID)
-	if err != nil {
+	if _, err := s.GetUser(ctx, userID); err != nil {
 		return domain.User{}, err
-	}
-	if u.IsDemo() {
-		return domain.User{}, domain.ErrDemoAccount
 	}
 
 	key := strings.ToUpper(strings.TrimSpace(raw))

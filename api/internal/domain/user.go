@@ -1,9 +1,6 @@
 package domain
 
-import (
-	"strings"
-	"time"
-)
+import "time"
 
 type User struct {
 	ID           int64
@@ -19,13 +16,6 @@ type User struct {
 	Role      string // "user" ou "admin"
 	DebtCents int64  // o que deve à plataforma; com dívida, não compra
 	CreatedAt time.Time
-}
-
-// Contas de demonstração (seed) têm steam_id "demo-*": não existem na Steam.
-const DemoSteamIDPrefix = "demo-"
-
-func (u User) IsDemo() bool {
-	return strings.HasPrefix(u.SteamID, DemoSteamIDPrefix)
 }
 
 const RoleAdmin = "admin"

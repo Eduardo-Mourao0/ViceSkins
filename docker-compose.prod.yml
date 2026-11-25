@@ -1,0 +1,90 @@
+# Produção numa máquina só (VPS/VM com Docker): Postgres, API, front e Caddy.
+#
+#   cp deploy/.env.prod.example .env    # e preencha
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Só o Caddy fica exposto (80/443). Ele emite o certificado HTTPS sozinho
+# (Let's Encrypt) para o DOMAIN e repassa tudo ao front. O navegador nunca
+# fala com a API direto: o Next faz o proxy de /api/* para ela, na rede interna.
+#
+# As variáveis com ":?" são obrigatórias: o compose se recusa a subir sem elas.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: viceskins
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD}
+      POSTGRES_DB: viceskins
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U viceskins -d viceskins"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  migrate:
+    image: migrate/migrate:v4.18.3
+    volumes:
+      - ./api/db/migrations:/migrations:ro
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://viceskins:${POSTGRES_PASSWORD}@postgres:5432/viceskins?sslmode=disable"
+      - "up"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    environment:
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://viceskins:${POSTGRES_PASSWORD}@postgres:5432/viceskins?sslmode=disable
+      # Pelo proxy do front: o callback do login Steam volta para o mesmo domínio.
+      PUBLIC_API_URL: https://${DOMAIN:?defina DOMAIN}/api
+      AUTH_REDIRECT_URL: https://${DOMAIN}/inventory
+      COOKIE_SECURE: "true"
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET}
+      STEAM_API_KEY: ${STEAM_API_KEY:?defina STEAM_API_KEY}
+      SECRETS_KEY: ${SECRETS_KEY:?defina SECRETS_KEY}
+      ADMIN_STEAM_IDS: ${ADMIN_STEAM_IDS:-}
+      PLATFORM_FEE_BPS: ${PLATFORM_FEE_BPS:-200}
+      TRADE_PROVIDER: steam
+      TRADE_HOLD_DURATION: ${TRADE_HOLD_DURATION:-168h}
+      SELLER_SEND_TIMEOUT: ${SELLER_SEND_TIMEOUT:-12h}
+      BUYER_ACCEPT_TIMEOUT: ${BUYER_ACCEPT_TIMEOUT:-12h}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: ./web
+      args:
+        API_INTERNAL_URL: http://api:8080
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  caddy:
+    image: caddy:2.10.0-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

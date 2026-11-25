@@ -178,3 +178,17 @@ export type Dispute = {
   buyerDebtCents: number;
   sellerName: string;
 };
+
+export type DepositStatus = "pending" | "paid" | "expired";
+
+/** Depósito via Pix: o saldo só entra quando a cobrança é paga. */
+export type Deposit = {
+  id: number;
+  amountCents: number;
+  status: DepositStatus;
+  brCode: string; // Pix copia e cola
+  expiresAt: string;
+  paidAt: string | null;
+  createdAt: string;
+  canSimulate: boolean; // só no ambiente com Pix simulado
+};

@@ -12,7 +12,6 @@ import (
 )
 
 type WalletService interface {
-	Deposit(ctx context.Context, userID, amountCents int64) (domain.WalletEntry, error)
 	Wallet(ctx context.Context, userID int64, limit int) (domain.Wallet, error)
 }
 
@@ -22,35 +21,6 @@ type WalletHandler struct {
 
 func NewWalletHandler(svc WalletService) *WalletHandler {
 	return &WalletHandler{svc: svc}
-}
-
-type depositRequest struct {
-	AmountCents int64 `json:"amountCents"`
-}
-
-// POST /wallet/deposits
-func (h *WalletHandler) Deposit(w http.ResponseWriter, r *http.Request) {
-	var req depositRequest
-	if err := readJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	userID, _ := userIDFrom(r.Context())
-	e, err := h.svc.Deposit(r.Context(), userID, req.AmountCents)
-	switch {
-	case errors.Is(err, domain.ErrInvalidInput):
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	case errors.Is(err, domain.ErrNotFound):
-		writeError(w, http.StatusUnauthorized, "unauthenticated")
-		return
-	case err != nil:
-		slog.Error("deposit", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	writeJSON(w, http.StatusCreated, toWalletEntryResponse(e))
 }
 
 // GET /me/wallet?limit=50

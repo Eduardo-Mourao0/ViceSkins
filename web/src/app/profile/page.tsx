@@ -25,7 +25,7 @@ function Profile({ me }: { me: User }) {
         </div>
       </section>
       <TradeURLForm current={me.tradeUrl} />
-      {!me.steamId.startsWith("demo-") && <SteamAPIKeyForm me={me} />}
+      <SteamAPIKeyForm me={me} />
     </div>
   );
 }

@@ -19,10 +19,10 @@ const filters: { id: Filter; label: string }[] = [
 ];
 
 export default function InventoryPage() {
-  return <RequireLogin>{(me) => <Inventory demo={me.steamId.startsWith("demo-")} />}</RequireLogin>;
+  return <RequireLogin>{() => <Inventory />}</RequireLogin>;
 }
 
-function Inventory({ demo }: { demo: boolean }) {
+function Inventory() {
   const { data: inv, isPending, error } = useInventory(true);
   const refresh = useRefreshInventory();
   const [filter, setFilter] = useState<Filter>("all");
@@ -71,14 +71,7 @@ function Inventory({ demo }: { demo: boolean }) {
   if (error) return <Alert>Erro ao carregar o inventário: {error.message}</Alert>;
 
   const cooling = secondsLeft > 0;
-  const refreshButton = demo ? (
-    <span
-      title="Contas demo não existem na Steam; os itens vieram da seed."
-      className="rounded-lg border border-line px-3 py-2 text-xs text-muted"
-    >
-      Conta demo · sem sincronização
-    </span>
-  ) : (
+  const refreshButton = (
     <Button
       variant="secondary"
       onClick={doRefresh}

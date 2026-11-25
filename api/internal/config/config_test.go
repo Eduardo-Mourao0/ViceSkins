@@ -7,22 +7,13 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef")
 }
 
-func TestDevLoginRefusedWithSecureCookies(t *testing.T) {
-	setBaseEnv(t)
-	t.Setenv("DEV_LOGIN", "true")
-	t.Setenv("COOKIE_SECURE", "true")
-	if _, err := Load(); err == nil {
-		t.Fatal("expected error: DEV_LOGIN must not run with COOKIE_SECURE=true")
-	}
-}
-
 func TestDefaults(t *testing.T) {
 	setBaseEnv(t)
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DevLogin || cfg.PlatformFeeBps != 200 || cfg.TradeHoldDuration.Hours() != 168 {
+	if cfg.PlatformFeeBps != 200 || cfg.TradeHoldDuration.Hours() != 168 {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 }
@@ -52,13 +43,19 @@ func TestTradeProvider(t *testing.T) {
 
 func TestAdminSteamIDs(t *testing.T) {
 	setBaseEnv(t)
-	t.Setenv("ADMIN_STEAM_IDS", " 76561198000000001 , demo-1,,")
+	t.Setenv("ADMIN_STEAM_IDS", " 76561198000000001 , 76561198000000002,,")
 	cfg, err := Load()
-	if err != nil || len(cfg.AdminSteamIDs) != 2 || cfg.AdminSteamIDs[1] != "demo-1" {
+	if err != nil || len(cfg.AdminSteamIDs) != 2 || cfg.AdminSteamIDs[1] != "76561198000000002" {
 		t.Fatalf("%v, %v", cfg.AdminSteamIDs, err)
 	}
-	t.Setenv("COOKIE_SECURE", "true")
-	if _, err := Load(); err == nil {
-		t.Fatal("a demo admin must be refused in production (COOKIE_SECURE=true)")
+}
+
+func TestAdminSteamIDsMustBeSteamID64(t *testing.T) {
+	setBaseEnv(t)
+	for _, bad := range []string{"demo-1", "123", "7656119800000000x"} {
+		t.Setenv("ADMIN_STEAM_IDS", bad)
+		if _, err := Load(); err == nil {
+			t.Fatalf("%q must be refused", bad)
+		}
 	}
 }

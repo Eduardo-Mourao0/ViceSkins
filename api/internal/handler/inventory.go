@@ -61,8 +61,6 @@ func (h *InventoryHandler) writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnauthorized, "unauthenticated")
 	case errors.Is(err, domain.ErrInventoryPrivate):
 		writeError(w, http.StatusUnprocessableEntity, "your steam inventory is private")
-	case errors.Is(err, domain.ErrDemoAccount):
-		writeError(w, http.StatusUnprocessableEntity, "demo accounts are not linked to steam")
 	case errors.Is(err, domain.ErrUpstreamRateLimited):
 		writeError(w, http.StatusServiceUnavailable, "steam is rate limiting requests, try again later")
 	default:

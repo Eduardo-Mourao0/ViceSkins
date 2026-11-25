@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -66,9 +65,6 @@ func (s *InventoryService) Refresh(ctx context.Context, userID int64) (domain.In
 	u, err := s.getUser(ctx, userID)
 	if err != nil {
 		return domain.Inventory{}, err
-	}
-	if strings.HasPrefix(u.SteamID, domain.DemoSteamIDPrefix) {
-		return domain.Inventory{}, domain.ErrDemoAccount
 	}
 
 	now := s.now()

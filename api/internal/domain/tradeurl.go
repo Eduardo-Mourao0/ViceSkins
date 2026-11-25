@@ -20,7 +20,6 @@ var tradeTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]{8}$`)
 //
 // O partner precisa ser a conta do próprio usuário: sem isso, alguém poderia
 // cadastrar a URL de outra pessoa e mandar os itens comprados para ela.
-// Contas demo não existem na Steam, então só o formato é conferido.
 func NormalizeTradeURL(raw string, owner User) (string, error) {
 	invalid := func(reason string) error {
 		return fmt.Errorf("%w: trade url %s", ErrInvalidInput, reason)
@@ -49,11 +48,9 @@ func NormalizeTradeURL(raw string, owner User) (string, error) {
 		return "", invalid("has an invalid token")
 	}
 
-	if !owner.IsDemo() {
-		id64, err := strconv.ParseUint(owner.SteamID, 10, 64)
-		if err != nil || id64 < steamID64Base || id64-steamID64Base != partner {
-			return "", invalid("belongs to another steam account")
-		}
+	id64, err := strconv.ParseUint(owner.SteamID, 10, 64)
+	if err != nil || id64 < steamID64Base || id64-steamID64Base != partner {
+		return "", invalid("belongs to another steam account")
 	}
 
 	return fmt.Sprintf("https://steamcommunity.com/tradeoffer/new/?partner=%d&token=%s", partner, token), nil

@@ -12,7 +12,6 @@ var (
 
 	ErrInventoryPrivate    = errors.New("steam inventory is private")
 	ErrUpstreamRateLimited = errors.New("steam is rate limiting requests")
-	ErrDemoAccount         = errors.New("demo accounts are not linked to steam")
 
 	ErrItemNotTradable   = errors.New("item is not tradable")
 	ErrItemAlreadyListed = errors.New("item already has an active listing")
@@ -29,4 +28,7 @@ var (
 	ErrCannotCancelOffer = errors.New("the trade offer was already sent and cannot be cancelled by the platform")
 	ErrTradeUnverified   = errors.New("could not verify the trade on steam right now")
 	ErrBuyerHasDebt      = errors.New("pay your debt before buying")
+
+	ErrTooManyOpenDeposits = errors.New("too many open pix deposits")
+	ErrDepositExpired      = errors.New("pix deposit expired")
 )

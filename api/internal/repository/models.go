@@ -8,6 +8,21 @@ import (
 	"time"
 )
 
+type Deposit struct {
+	ID               int64
+	UserID           int64
+	AmountCents      int64
+	Status           string
+	Provider         string
+	ProviderChargeID *string
+	BRCode           string
+	ExpiresAt        time.Time
+	PaidAt           *time.Time
+	WalletEntryID    *int64
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
 type Dispute struct {
 	ID            int64
 	TransactionID int64

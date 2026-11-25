@@ -6,7 +6,7 @@
 // estornar, pagar) é o service, com regras conservadoras.
 //
 // Implementações:
-//   - Simulated: tudo em memória, para dev e demonstração.
+//   - Simulated: tudo em memória, para dev e testes.
 //   - Steam: híbrida. Sempre confere os inventários públicos; se o vendedor
 //     cadastrou a API key, também acompanha a oferta pela Web API.
 package trade

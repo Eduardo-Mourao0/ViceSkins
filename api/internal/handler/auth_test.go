@@ -33,35 +33,12 @@ func (f *fakeAuthService) GetUser(_ context.Context, id int64) (domain.User, err
 	return f.user, nil
 }
 
-func (f *fakeAuthService) DemoUsers(context.Context) ([]domain.User, error) {
-	if f.user.IsDemo() {
-		return []domain.User{f.user}, nil
-	}
-	return nil, nil
-}
-
-func (f *fakeAuthService) DemoLogin(ctx context.Context, id int64) (domain.User, error) {
-	u, err := f.GetUser(ctx, id)
-	if err != nil {
-		return domain.User{}, err
-	}
-	if !u.IsDemo() {
-		return domain.User{}, domain.ErrForbidden
-	}
-	return u, nil
-}
-
 func newTestRouter(svc AuthService) (http.Handler, *auth.Tokens) {
-	return newTestRouterWith(svc, false)
-}
-
-func newTestRouterWith(svc AuthService, devLogin bool) (http.Handler, *auth.Tokens) {
 	tokens := auth.NewTokens("test-secret-0123456789abcdef0123456789", time.Hour)
 	return NewRouter(Deps{
-		DB:       fakePinger{},
-		Auth:     NewAuthHandler(svc, tokens, false, "http://localhost:3000"),
-		Tokens:   tokens,
-		DevLogin: devLogin,
+		DB:     fakePinger{},
+		Auth:   NewAuthHandler(svc, tokens, false, "http://localhost:3000"),
+		Tokens: tokens,
 	}), tokens
 }
 
@@ -138,49 +115,6 @@ func TestMeRequiresAuth(t *testing.T) {
 	}
 }
 
-func TestDevLoginRoutesDoNotExistWhenDisabled(t *testing.T) {
-	router, _ := newTestRouterWith(&fakeAuthService{user: domain.User{ID: 1, SteamID: "demo-1"}}, false)
-	for _, req := range []*http.Request{
-		httptest.NewRequest(http.MethodGet, "/auth/dev/users", nil),
-		httptest.NewRequest(http.MethodPost, "/auth/dev/login", strings.NewReader(`{"userId":1}`)),
-	} {
-		rec := httptest.NewRecorder()
-		router.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
-			t.Fatalf("%s %s = %d, want 404/405 when DEV_LOGIN is off", req.Method, req.URL.Path, rec.Code)
-		}
-	}
-}
-
-func TestDevLogin(t *testing.T) {
-	tests := []struct {
-		name    string
-		steamID string
-		want    int
-	}{
-		{"demo account gets a session", "demo-1", http.StatusOK},
-		{"real steam account is refused", "76561197960287930", http.StatusForbidden},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			router, _ := newTestRouterWith(&fakeAuthService{user: domain.User{ID: 7, SteamID: tt.steamID}}, true)
-			rec := httptest.NewRecorder()
-			router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/auth/dev/login", strings.NewReader(`{"userId":7}`)))
-
-			if rec.Code != tt.want {
-				t.Fatalf("status = %d, want %d (body %s)", rec.Code, tt.want, rec.Body)
-			}
-			gotCookie := false
-			for _, c := range rec.Result().Cookies() {
-				gotCookie = gotCookie || (c.Name == sessionCookie && c.Value != "")
-			}
-			if gotCookie != (tt.want == http.StatusOK) {
-				t.Fatalf("session cookie set = %v, want %v", gotCookie, tt.want == http.StatusOK)
-			}
-		})
-	}
-}
-
 func (f *fakeAuthService) SetTradeURL(context.Context, int64, string) (domain.User, error) {
 	return domain.User{}, nil
 }
@@ -191,4 +125,26 @@ func (f *fakeAuthService) SetSteamAPIKey(context.Context, int64, string) (domain
 
 func (f *fakeAuthService) DeleteSteamAPIKey(context.Context, int64) (domain.User, error) {
 	return domain.User{}, nil
+}
+
+func TestSteamLoginIsRateLimitedPerIP(t *testing.T) {
+	router, _ := newTestRouter(&fakeAuthService{})
+	hit := func(ip string) int {
+		req := httptest.NewRequest(http.MethodGet, "/auth/steam/login", nil)
+		req.RemoteAddr = ip + ":1234"
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for i := range 20 {
+		if code := hit("10.0.0.1"); code != http.StatusFound {
+			t.Fatalf("request %d = %d, want 302", i+1, code)
+		}
+	}
+	if code := hit("10.0.0.1"); code != http.StatusTooManyRequests {
+		t.Fatalf("21st request = %d, want 429", code)
+	}
+	if code := hit("10.0.0.2"); code != http.StatusFound {
+		t.Fatalf("other ip = %d, want 302 (limit is per ip)", code)
+	}
 }

@@ -25,6 +25,21 @@ const nextConfig: NextConfig = {
       new URL("https://avatars.steamstatic.com/**"),
     ],
   },
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          // Ninguém embute o site num iframe (clickjacking no botão de comprar).
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+        ],
+      },
+    ];
+  },
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${apiURL}/:path*` }];
   },

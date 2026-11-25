@@ -18,6 +18,7 @@ import (
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/config"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/handler"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/jobs"
+	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/payment"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/repository"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/secrets"
 	"github.com/Eduardo-Mourao0/ViceSkins/api/internal/service"
@@ -54,9 +55,6 @@ func run() error {
 		return fmt.Errorf("ping db: %w", err)
 	}
 
-	if cfg.DevLogin {
-		slog.Warn("DEV_LOGIN enabled: anyone can log in as the demo accounts. Never use in production.")
-	}
 	if cfg.SteamAPIKey == "" {
 		slog.Warn("STEAM_API_KEY not set: steam login will fail when fetching the profile")
 	}
@@ -106,6 +104,9 @@ func run() error {
 		Keys:               keys,
 	})
 
+	// Pix fictício: só existe o provedor simulado por enquanto.
+	depositSvc := service.NewDepositService(store, payment.NewSimulated())
+
 	// Jobs em background. Ao sair de run(), os defers rodam em ordem inversa:
 	// primeiro param os jobs e esperamos a rodada atual, depois fecha o pool.
 	jobsCtx, stopJobs := context.WithCancel(ctx)
@@ -122,6 +123,7 @@ func run() error {
 	jobs.Every(jobsCtx, &jobsWG, "expire-deadlines", 30*time.Second, purchaseSvc.ExpireDeadlines)
 	jobs.Every(jobsCtx, &jobsWG, "late-delivery-watch", time.Minute, purchaseSvc.WatchClosedTrades)
 	jobs.Every(jobsCtx, &jobsWG, "dispute-release", time.Minute, purchaseSvc.ReleaseDueDisputes)
+	jobs.Every(jobsCtx, &jobsWG, "deposit-expiry", 30*time.Second, depositSvc.ExpireDeposits)
 
 	router := handler.NewRouter(handler.Deps{
 		DB:           pool,
@@ -130,11 +132,11 @@ func run() error {
 		Listings:     handler.NewListingHandler(listingSvc),
 		Market:       handler.NewMarketHandler(service.NewMarketService(store)),
 		Wallet:       handler.NewWalletHandler(service.NewWalletService(store)),
+		Deposits:     handler.NewDepositHandler(depositSvc),
 		Transactions: handler.NewTransactionHandler(purchaseSvc, service.NewHistoryService(store)),
 		Admin:        handler.NewAdminHandler(purchaseSvc),
 		Users:        authSvc,
 		Tokens:       tokens,
-		DevLogin:     cfg.DevLogin,
 	})
 
 	srv := &http.Server{

@@ -22,8 +22,6 @@ type AuthService interface {
 	LoginURL(state string) string
 	LoginWithSteam(ctx context.Context, q url.Values) (domain.User, error)
 	GetUser(ctx context.Context, id int64) (domain.User, error)
-	DemoUsers(ctx context.Context) ([]domain.User, error)
-	DemoLogin(ctx context.Context, userID int64) (domain.User, error)
 	SetTradeURL(ctx context.Context, userID int64, raw string) (domain.User, error)
 	SetSteamAPIKey(ctx context.Context, userID int64, raw string) (domain.User, error)
 	DeleteSteamAPIKey(ctx context.Context, userID int64) (domain.User, error)
@@ -48,9 +46,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name:     stateCookie,
-		Value:    state,
-		Path:     "/auth/steam",
+		Name:  stateCookie,
+		Value: state,
+		// Path "/": em produção o callback chega pelo proxy do Next
+		// (/api/auth/steam/callback), e um Path "/auth/steam" não casaria.
+		Path:     "/",
 		MaxAge:   600,
 		HttpOnly: true,
 		Secure:   h.cookieSecure,
@@ -68,7 +68,7 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid login state")
 		return
 	}
-	h.clearCookie(w, stateCookie, "/auth/steam")
+	h.clearCookie(w, stateCookie, "/")
 
 	user, err := h.svc.LoginWithSteam(r.Context(), q)
 	if err != nil {
@@ -107,50 +107,6 @@ func (h *AuthHandler) startSession(w http.ResponseWriter, userID int64) bool {
 		SameSite: http.SameSiteLaxMode,
 	})
 	return true
-}
-
-// ---- Login de demonstração (só registrado com DEV_LOGIN=true) ----
-
-// GET /auth/dev/users
-func (h *AuthHandler) DevUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := h.svc.DemoUsers(r.Context())
-	if err != nil {
-		slog.Error("demo users", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	out := make([]userResponse, 0, len(users))
-	for _, u := range users {
-		out = append(out, toUserResponse(u))
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"users": out})
-}
-
-// POST /auth/dev/login {"userId": 3}
-func (h *AuthHandler) DevLogin(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		UserID int64 `json:"userId"`
-	}
-	if err := readJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	user, err := h.svc.DemoLogin(r.Context(), req.UserID)
-	switch {
-	case errors.Is(err, domain.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	case errors.Is(err, domain.ErrForbidden):
-		writeError(w, http.StatusForbidden, "only demo accounts can use demo login")
-		return
-	case err != nil:
-		slog.Error("demo login", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if h.startSession(w, user.ID) {
-		writeJSON(w, http.StatusOK, toUserResponse(user))
-	}
 }
 
 // POST /auth/logout
@@ -280,8 +236,6 @@ func (h *AuthHandler) writeUserResult(w http.ResponseWriter, user domain.User, e
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, domain.ErrInvalidAPIKey):
 		writeError(w, http.StatusBadRequest, "steam rejected this api key")
-	case errors.Is(err, domain.ErrDemoAccount):
-		writeError(w, http.StatusUnprocessableEntity, "demo accounts are not linked to steam")
 	case errors.Is(err, domain.ErrFeatureDisabled):
 		writeError(w, http.StatusServiceUnavailable, "steam api keys are not enabled on this server")
 	case errors.Is(err, domain.ErrNotFound):

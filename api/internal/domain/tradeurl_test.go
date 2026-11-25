@@ -8,7 +8,6 @@ import (
 func TestNormalizeTradeURL(t *testing.T) {
 	// SteamID64 76561198000000123 → account id 39734395.
 	steamUser := User{SteamID: "76561198000000123"}
-	demo := User{SteamID: "demo-1"}
 	const canonical = "https://steamcommunity.com/tradeoffer/new/?partner=39734395&token=AbC-12_x"
 
 	ok := []struct {
@@ -20,16 +19,12 @@ func TestNormalizeTradeURL(t *testing.T) {
 		{"no trailing slash", "https://steamcommunity.com/tradeoffer/new?partner=39734395&token=AbC-12_x", steamUser},
 		{"params reordered", "https://steamcommunity.com/tradeoffer/new/?token=AbC-12_x&partner=39734395", steamUser},
 		{"extra params are dropped", canonical + "&utm=x", steamUser},
-		{"demo skips ownership", "https://steamcommunity.com/tradeoffer/new/?partner=1&token=AbC-12_x", demo},
 	}
 	for _, c := range ok {
 		t.Run(c.name, func(t *testing.T) {
 			got, err := NormalizeTradeURL(c.raw, c.user)
 			if err != nil {
 				t.Fatal(err)
-			}
-			if c.user.IsDemo() {
-				return
 			}
 			if got != canonical {
 				t.Fatalf("got %s, want %s", got, canonical)

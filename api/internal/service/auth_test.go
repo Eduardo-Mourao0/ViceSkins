@@ -23,7 +23,6 @@ func (f *fakeUsers) UpsertUserBySteamID(context.Context, repository.UpsertUserBy
 	return f.user, nil
 }
 func (f *fakeUsers) GetUserByID(context.Context, int64) (repository.User, error) { return f.user, nil }
-func (f *fakeUsers) ListDemoUsers(context.Context) ([]repository.User, error)    { return nil, nil }
 func (f *fakeUsers) SetTradeURL(context.Context, repository.SetTradeURLParams) (repository.User, error) {
 	return f.user, nil
 }
@@ -78,7 +77,6 @@ func TestSetSteamAPIKey(t *testing.T) {
 	}{
 		{"bad format", "76561198000000123", "not-a-key", nil, domain.ErrInvalidInput},
 		{"rejected by steam", "76561198000000123", key, steam.ErrInvalidAPIKey, domain.ErrInvalidAPIKey},
-		{"demo account", "demo-1", key, nil, domain.ErrDemoAccount},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			svc, users := newSvc(tt.steamID, tt.valErr)

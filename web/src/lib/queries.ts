@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-query";
 import { api, isApiError } from "./api";
 import type {
+  Deposit,
   Dispute,
   DisputeStatus,
   Inventory,
@@ -25,7 +26,6 @@ import type {
   TxSummary,
   User,
   Wallet,
-  WalletEntry,
 } from "./types";
 
 export const keys = {
@@ -35,6 +35,8 @@ export const keys = {
   market: (query: string) => ["market", query] as const,
   listing: (id: number) => ["listing", id] as const,
   wallet: ["wallet"] as const,
+  openDeposit: ["deposit", "open"] as const,
+  deposit: (id: number) => ["deposit", id] as const,
   transaction: (id: number) => ["transaction", id] as const,
 };
 
@@ -98,16 +100,41 @@ export function useWallet(enabled: boolean) {
   });
 }
 
-export function useDeposit() {
+/** Pix em aberto do usuário (a tela de depósito retoma de onde parou), ou null. */
+export function useOpenDeposit() {
+  return useQuery({
+    queryKey: keys.openDeposit,
+    queryFn: async () => (await api<Deposit | undefined>("/wallet/deposits/open")) ?? null,
+  });
+}
+
+/** Acompanha um Pix; consulta a cada 2,5s enquanto ele não é pago nem expira. */
+export function useDepositStatus(id: number | null) {
+  return useQuery({
+    queryKey: keys.deposit(id ?? 0),
+    queryFn: () => api<Deposit>(`/wallet/deposits/${id}`),
+    enabled: id !== null,
+    refetchInterval: (q) => (q.state.data?.status === "pending" ? 2_500 : false),
+  });
+}
+
+export function useCreateDeposit() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (amountCents: number) =>
-      api<WalletEntry>("/wallet/deposits", { method: "POST", body: JSON.stringify({ amountCents }) }),
-    onSuccess: () => {
-      // O depósito pode quitar dívida (saldo final != valor depositado): busca de novo.
-      qc.invalidateQueries({ queryKey: keys.me });
-      qc.invalidateQueries({ queryKey: keys.wallet });
+      api<Deposit>("/wallet/deposits", { method: "POST", body: JSON.stringify({ amountCents }) }),
+    onSuccess: (d) => {
+      qc.setQueryData(keys.deposit(d.id), d);
+      qc.invalidateQueries({ queryKey: keys.openDeposit });
     },
+  });
+}
+
+export function useSimulatePixPayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api<Deposit>(`/wallet/deposits/${id}/simulate-payment`, { method: "POST" }),
+    onSuccess: (d) => qc.setQueryData(keys.deposit(d.id), d),
   });
 }
 
@@ -141,36 +168,6 @@ export function useMe() {
       }
     },
     staleTime: 60_000,
-  });
-}
-
-/** Contas da seed de demonstração. Lista vazia quando o login demo está desligado (404). */
-export function useDemoUsers() {
-  return useQuery({
-    queryKey: ["demo-users"],
-    queryFn: async () => {
-      try {
-        return (await api<{ users: User[] }>("/auth/dev/users")).users;
-      } catch (e) {
-        if (isApiError(e, 404)) return [];
-        throw e;
-      }
-    },
-    staleTime: Infinity,
-    retry: false,
-  });
-}
-
-export function useDemoLogin() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (userId: number) =>
-      api<User>("/auth/dev/login", { method: "POST", body: JSON.stringify({ userId }) }),
-    onSuccess: async (user) => {
-      // Trocou de usuário: nada do cache anterior vale mais.
-      await qc.resetQueries();
-      qc.setQueryData(keys.me, user);
-    },
   });
 }
 

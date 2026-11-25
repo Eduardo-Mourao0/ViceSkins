@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { FloatBar } from "@/components/float-bar";
 import { RequireLogin } from "@/components/require-login";
 import { TxProgress, TxStatusBadge, txStatusInfo } from "@/components/tx-status";
@@ -11,6 +10,7 @@ import { isApiError } from "@/lib/api";
 import { formatDate, formatFloat, formatPrice, timeAgo } from "@/lib/format";
 import { useCancelTransaction, useMarkSent, useTransaction } from "@/lib/queries";
 import type { TransactionDetail } from "@/lib/types";
+import { useNow } from "@/lib/use-now";
 
 export function TransactionView({ id }: { id: number }) {
   return <RequireLogin>{() => <Detail id={id} />}</RequireLogin>;
@@ -228,16 +228,6 @@ function Deadline({ tx, buying, deadlineAt }: { tx: TransactionDetail; buying: b
         : `${who} até ${formatDate(deadlineAt)} (${timeAgo(deadlineAt)}) para ${what}. Depois disso, a compra é cancelada e o valor volta para o comprador.`}
     </p>
   );
-}
-
-/** Hora atual em estado, atualizada a cada 30s: o render continua puro. */
-function useNow(intervalMs = 30_000) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(t);
-  }, [intervalMs]);
-  return now;
 }
 
 // Mensagens da API (inglês) → texto para o usuário.

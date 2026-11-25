@@ -15,6 +15,7 @@ sql:
           present_asset_ids: PresentAssetIDs
           seller_avatar_url: SellerAvatarURL
           buyer_avatar_url: BuyerAvatarURL
+          br_code: BRCode
           trade_url: TradeURL
           buyer_trade_url: BuyerTradeURL
           steam_api_key_enc: SteamAPIKeyEnc

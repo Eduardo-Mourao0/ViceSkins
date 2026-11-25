@@ -1,0 +1,17 @@
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		# Só HTTPS por 1 ano (o Caddy já redireciona o HTTP).
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	reverse_proxy web:3000 {
+		# O X-Forwarded-For o Caddy já reescreve com o IP real do cliente.
+		# Estes dois a API também usaria para descobrir o IP (rate limit):
+		# vindos do próprio cliente seriam forjados, então saem aqui.
+		header_up -X-Real-IP
+		header_up -True-Client-IP
+	}
+}

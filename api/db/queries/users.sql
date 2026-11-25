@@ -11,12 +11,6 @@ RETURNING *;
 SELECT * FROM users
 WHERE id = $1;
 
--- Usuários criados pela seed de demonstração (db/seed/dev_seed.sql).
--- name: ListDemoUsers :many
-SELECT * FROM users
-WHERE steam_id LIKE 'demo-%'
-ORDER BY id;
-
 -- name: SetTradeURL :one
 UPDATE users
 SET trade_url = @trade_url, updated_at = now()
