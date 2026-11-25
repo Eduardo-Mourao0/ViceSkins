@@ -4,11 +4,12 @@ import Image from "next/image";
 import Link from "next/link";
 import { FloatBar } from "@/components/float-bar";
 import { RequireLogin } from "@/components/require-login";
+import { SendOfferPanel } from "@/components/send-offer";
 import { TxProgress, TxStatusBadge, txStatusInfo } from "@/components/tx-status";
 import { Alert, Button, EmptyState, Spinner } from "@/components/ui";
 import { isApiError } from "@/lib/api";
 import { formatDate, formatFloat, formatPrice, timeAgo } from "@/lib/format";
-import { useCancelTransaction, useMarkSent, useTransaction } from "@/lib/queries";
+import { useCancelTransaction, useTransaction } from "@/lib/queries";
 import type { TransactionDetail } from "@/lib/types";
 import { useNow } from "@/lib/use-now";
 
@@ -45,7 +46,6 @@ function Detail({ id }: { id: number }) {
 
 function TxDetail({ tx }: { tx: TransactionDetail }) {
   const cancel = useCancelTransaction();
-  const markSent = useMarkSent();
   const buying = tx.role === "buyer";
   const other = buying ? tx.seller : tx.buyer;
   const info = txStatusInfo[tx.status];
@@ -118,34 +118,7 @@ function TxDetail({ tx }: { tx: TransactionDetail }) {
           </div>
 
           {/* P2P: o vendedor envia a oferta para a trade URL do comprador. */}
-          {tx.buyerTradeUrl && (
-            <div className="rounded-lg border border-cyan/40 bg-cyan/5 p-4 text-sm">
-              <p className="font-semibold">Envie o item para o comprador</p>
-              <p className="mt-1 text-muted">
-                Crie a oferta de troca na Steam por esta trade URL, só com este item e sem pedir nada em troca.
-              </p>
-              <a
-                href={tx.buyerTradeUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-2 block truncate font-mono text-xs text-cyan-soft hover:underline"
-              >
-                {tx.buyerTradeUrl}
-              </a>
-              <p className="mt-3 text-xs text-muted">
-                Depois de enviar, avise aqui: o prazo passa a ser do comprador. A entrega é confirmada pelo inventário dele
-                (ou pela sua API key, se cadastrada).
-              </p>
-              {markSent.error && (
-                <div className="mt-2">
-                  <Alert>{markSent.error.message}</Alert>
-                </div>
-              )}
-              <Button className="mt-3" onClick={() => markSent.mutate(tx.id)} loading={markSent.isPending}>
-                Já enviei a oferta
-              </Button>
-            </div>
-          )}
+          {tx.buyerTradeUrl && <SendOfferPanel tx={tx} tradeUrl={tx.buyerTradeUrl} />}
 
           {tx.lateDeliveryAt && (
             <Alert tone="warning">
